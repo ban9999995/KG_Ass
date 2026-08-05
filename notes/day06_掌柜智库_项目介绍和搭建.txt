@@ -1,0 +1,282 @@
+
+1. 项目介绍
+   1.1 项目导入流程
+   	   任务分发: 判断文件类型,跳转到解析节点
+   	   pdf解析:  判断pdf文件类型,会解析成md
+   	   图片处理: 识别图片意图,进行图片的地址上传  ![](./) -> ![描述](http..)
+   	   内容切割: md -> chunk 
+   	   主体识别: 文件 -> 主体 -> 问题缩小范围  [1.一个文件只有一个主体 2.多个文件对应一个主体]
+   	   数据向量化: chunk 主体 向量
+   	   向量入库: 向量存储到向量数据库
+   1.2 项目检索流程 
+       用户问题的意图识别和问题重写: 1. 从用户问题从提取主体 2. 对问题进行重写  '它好不好用? 烫金机好不好用!'
+       多路检索
+          1. 问题向量化检索 
+          2. 问题生成假设性答案检索
+          3. 利用网络mcp服务进行检索
+        向量查询数据融合 1 2 
+        使用重排序模型进行 12 + 3路融入
+        生成答案
+   1.3 项目向量库设计
+       文档级别的索引: item_name 
+       作用: 比较用户提问中被模型识别的item_name!
+       	 pk
+       	 file_title
+       	 item_name
+       	 sparse_vector 稀疏向量   关键字命中
+       	 dense_vector  稠密向量   语言匹配啊
+       
+            一条数据
+    		   |
+       	 	 文档 
+ 			   |
+ 			N条数据 (item_name = 上方一条item_name)   
+
+       切块级别的索引:  item_name content 
+         chunk_id
+         content 
+         title
+         parent_title
+         part 
+         file_title
+         item_name
+         sparse_vector
+         dense_vector 
+
+2. 项目搭建 
+   2.1 创建项目和依赖同步
+       项目要求python解释器版本: 3.11 3.12 
+       步骤1: 创建一个uv管理的项目(3.11)
+          可视化: 25+版本pycharm / new project / 版本管理工 uv  /  3.11 / create ..
+          命令化:  
+             	  pip install uv 
+             	  pip show uv -> uv安装地址 -> Path
+             	  uv配置镜像
+           		  uv init 项目名
+           		  uv init 项目名 --bare
+           		  uv venv --python=3.11
+           		  pycharm打开
+            ai_0511_knowledge_base
+
+            检查: 1. 取消conda集合 conda deactivate  2. 解释器的设置选中当前项目的解释器
+
+       步骤2: 同步项目的依赖配置
+          1. 导入项目依赖配置 
+              pyproject.toml 
+              uv.lock 
+          解释: 
+             pyproject.toml  1.项目信息 2.依赖包信息(python = uv add xx >= 3.11)[版本是非固定的] 3. 镜像信息
+             uv.lock  作用: 锁定依赖版本  生成: 1. 第一次uv sync  第二次不改动 
+                                              2. 我们主动add   uv add  uv remove 
+             uv sync -> 1. 先去pyproject.toml  / dependencies 查找我们需要的依赖
+                        2. 再去uv.lock查找有没有锁定对应依赖版本
+                        场景1: 没有uv.lock 或者 uv.lock没有对应依赖包  下载最新版本同时生成或者再uv.lock添加版本锁
+                        场景2: 有uv.lock,且锁定过版本,就下载对应的版本! (避免不同时期,同步不同的版本,项目不兼容的问题)
+          2. 同步和检查依赖
+             uv sync -> pyproject.toml 下载依赖 >= 3.11 -> 大于 且最新版本依赖   0318  0415 0511
+             uv tree 
+
+          3. 检查
+             uv tree
+             创建一个模块尝试导入一下!!
+
+   2.2 项目结构设计
+
+   		项目文件夹 
+
+   		    app  ---> 正式代码
+   		        api       ---> web接口 fastapi 
+   		          http       ---> fastapi接口代码
+   		          schema     ---> json的数据结构
+   		        infra     ---> 公共模块类 [项目内部的集成]
+ 				  milvus_gateway.py
+ 				         milvus_client
+ 				         mivlus_config
+   		        process   ---> langgraph的节点
+   		          import_    ---> 导入流程的节点
+   		          query      ---> 检索流程的节点
+   		        rag       ---> rag项目的业务代码
+   		          import_    ---> 导入节点对应的业务代码
+   		          query      ---> 检索节点对应的业务代码
+   		        shared    ---> 公共配置类 (utils)
+   		          clients
+   		             milvus_client.py  -> milvus的链接 MilvusClient() -> 函数
+   		          models
+   		          xxxxx
+   		          configs 
+   		             mivlus_config.py  -> milvus的属性 集合名 / 其他的属性
+   		        resources ---> 项目静态资源 提示词 html页面
+   		          prompts    --> 提示词文件
+   		          htmls      --> 静态页面
+   		    test ---> 测试代码
+   		    logs ---> 项目日志文件
+   		    .env ---> 不会提交到版本库
+   		    .env.example ---> 会提交到版本库 有哪些key
+   2.3 项目基础类导入
+       步骤1: 导入配置文件 .env 
+           资料 / 配置文件  .env[自己用] .env.example[提交到git]
+       步骤2: 
+          1. 为啥要导入日志工具
+             之前: print(f"")  -> 控制台 -> 开发周期 -> 生产周期(部署) -> 日志 -> 日志文件 <-> 软件
+             现在: 导入日志工具,loguru 可以将日志输出到文件等位置
+                   1. 输出的格式可以自定义 2. 输出的位置可以自定义 3. 可以批量控制输出的开关
+          2. 日志工具输出级别
+               日志级别: debug - info  - warning  - error - exception 
+               级别好处: 1. 不同的级别输出到不同的位置 debug -> 控制台 info -> 文件 error -> 发邮件
+                        2. 利用级别控制整体的开关  例如:  关闭info级别 (debug/info) 
+               原则: 使用对应的输出对应的内容! 
+                   debug: 类似idea开发工具的debug思路,详细输出业务的执行过程! 每行添加debug输出都不过分!! [日志输出最多]
+                   info : 核心步骤输出, 1. 业务的业务入口(开始+开始核心参数) 2.关键的拐点(if)  3.业务的结束点(结束+业务的结果)
+                   warning: 可能发生问题的点,已经发生问题的点,但是这个问题可以修复!不影响业务的继续进行!
+                           if money > 10000: -> 某个阈值发生了偏离
+                              waring(可能没有这么多钱!!)
+                           local_dir rag - pdf - md -> 存储 -> local_dir 
+                           if not local_dir.is_dir():
+                              local_dir 存在 / 是文件夹
+                              logger.warning(f"local_dir没有对应的文件夹,我们已经完成创建,业务继续进行!")
+                              local_dir.mkdir(parents=True,..)
+                   error: 已经发生了问题,问题不可以修复,业务提前终止...
+                          rag - pdf local_file_path - md -> 存储 -> local_dir [warning]
+                          if not local_file_path.is_file():
+                              local_file_path没有真实的文件
+                              loggger.error("xxxxx,业务无法继续了!")
+                              raise FileNotFountError(f"xxxxxxxxx")  -> 异常处理的装饰器 -> 步骤 -> 润色 -> 发给前端
+                   exception: python专属,可以输出错误的堆栈信息
+                   		  try:
+                   		  		if xxx
+                   		  		   error  --> 明确错误 -> 我们自己主动raise异常和描述
+                   		  except Exception as e :
+                   		       发生了异常
+                   		       logger.exception(xx) -> 代码的意外报错 -> 打印日志信息 -> 报错的堆栈调用信息简化输出
+                   		       logger.error(xx) -> 打印日志信息 [不在这使用]
+          3. 日志工具相关配置
+             app/shared/runtime/logger.py
+
+            # ===================== 日志配置 =====================
+			# 控制台日志：True=开启/False=关闭，级别可选(DEBUG/INFO/WARNING/ERROR/CRITICAL)
+			LOG_CONSOLE_ENABLE=True
+			LOG_CONSOLE_LEVEL=DEBUG
+
+			# 日志配置
+			# 文件日志：True=开启/False=关闭，级别与控制台可独立设置
+			LOG_FILE_ENABLE=True
+			LOG_FILE_LEVEL=INFO
+			# 日志文件保留天数（自动删除过期日志，避免磁盘占满）
+			LOG_FILE_RETENTION=7 days
+
+          4. 如何日志输出
+            from app.shared.runtime.logger import logger #配置好的输出对象
+			logger.debug("输出的内容debug")
+
+			param ="xxx"
+			age   = 18
+			logger.info(f"输出的内容info:{param}")
+			logger.info("输出的内容info:{},我的年龄:{}",param,age)
+
+			logger.warning("输出的内容warning")
+			logger.error("输出的内容error")
+
+			try:
+			    i = 1/0
+			except Exception as e:
+			    logger.exception(f"报错了{str(e)}")
+		  5. 装饰器解释
+		   @node_log -> process -> 节点函数 		
+		   										info -> 代码中一些拐点(if)
+		   @step_log -> rag     -> 业务函数
+      步骤3: 准备提示词和导入工具
+         项目/资料/提示文件 1. prompts 2.  load_prompt.py
+         resources / prompts  -> 位置是固定!
+         shared/runtime/load_prompt.py
+
+         使用:
+            image_str:str = load_prompt(name="image_summary",root_folder="images",image_content=("1111","2222"))
+            logger.debug("加载的提示词:{}",image_str)
+      步骤4: 加载配置(.env)加载类
+         项目 / 资料 /配置加载类 / config
+         位置: app / shared / config
+         作用: 提前加载.env的配置参数,使用的使用 import llm_config . 属性 -> 快速使用
+         注意: config /common / load_dotenv(override=True) <- 修改
+      步骤5: 粘贴其他的工具
+         项目 / 资料 / shared的工具类 -> 项目shared包下! [读都不需要读]
+      步骤6: 粘贴项目测试pdf文件
+         项目 / 资料 / doc  -> 项目根路径 / doc
+      步骤7: infra的配置使用
+            from pydantic import BaseModel
+            from app.shared.config.embedding_config import embedding_config, EmbeddingConfig
+            from app.shared.config.lm_config import lm_config, LLMConfig
+            from app.shared.config.bailian_mcp_config import mcp_config, McpConfig
+            from app.shared.config.milvus_config import milvus_config, MilvusConfig
+            from app.shared.config.mineru_config import mineru_config, MinerUConfig
+            from app.shared.config.minio_config import minio_config, MinIOConfig
+            from app.shared.config.reranker_config import reranker_config, RerankerConfig
+            from app.shared.config.settings_config import settings, AppSettings
+
+            from dataclasses import dataclass , field
+
+            # todo: 意义, 体现infra的汇总作用!  之前: 使用哪个配置文件 -> shared/config  之后: 使用哪个配置 -> infra/config...
+
+
+            # class User1(BaseModel):
+            #     username:str
+            # @dataclass
+            # class User2:
+            #     username:str
+            #
+            # class User3:
+            #     username:str
+            #
+            # user3 =User3(username="xxx")
+            # user1 = User1(username="xxx")
+            # # 前端 -> "{username:xxx,password:xxx}" -> python -> class User(BaseModel): username:str , password:str
+            # # BaseModel 基础方法简化实例化 参数校验  以及json转换的方法 -> fastapi -> 接口函数(json "{}" -> 定义一个类型 BaseModel)
+            #
+            # User2 = User2(username="jjj")
+            # @dataclass 基础方法简化实例化 -> 简化实体类的使用 -> 配置类..
+
+
+            @dataclass
+            class InfraConfig:
+                embedding_config:EmbeddingConfig = field(default_factory=lambda : embedding_config)
+                lm_config:LLMConfig = field(default_factory=lambda : lm_config)
+                mcp_config:McpConfig = field(default_factory=lambda : mcp_config)
+                milvus_config:MilvusConfig = field(default_factory= lambda :milvus_config)
+                mineru_config:MinerUConfig = field(default_factory=lambda :mineru_config)
+                minio_config:MinIOConfig = field(default_factory=lambda :minio_config)
+                reranker_config:RerankerConfig = field(default_factory=lambda :reranker_config)
+                settings:AppSettings = field(default_factory= lambda : settings)
+
+            infra_config = InfraConfig()
+
+            print(f"模型的参数:{infra_config.lm_config.base_url}")
+
+            # ValueError: mutable default <class 'app.shared.config.embedding_config.EmbeddingConfig'>
+            # for field embedding_config is not allowed: use default_factory
+            """
+             实体类/数据类 -> 属性 -> 数据值
+               1. 实体类(TypedDict) : langgraph的state (scheme/input/output) -> node -> return {} -> 对象
+               2. 实体类(BaseModel) : 简化方法 - 参数校验 - json转化 -> fastapi接口json处理
+               3. 实体类 -> @dataclass : 简化方法 -> 普通的配置类实体类
+             for field embedding_config is not allowed: use default_factory
+             @dataclass / BaseModel 认为变量不安全! 一旦一方修改,另一方直接受影响!!
+                infra_config -> embedding_config
+                                                     -> embedding_config
+                embedding_config -> embedding_config
+
+             解决: xxx:xxx = field(default_factory=lambda : 对象)   逃过了检查,但事实上还是同一个对象(配置文件没有修改) | 修改 copy.deepcopy()
+             settings: 引用类型: 自定义类 字典 列表  值类型: 字符串 数字 bool  = field(default_factory= lambda : settings)
+
+            """
+   2.4 项目管理和地址记录
+      步骤1: 项目忽略文件
+         创建忽律文件
+         doc /
+         logs/
+         tests/
+      步骤2: 本地提交第一个版本
+         项目交给git管理
+         推送第一个版本
+      步骤3: 推送到远程
+3. 导入图结构搭建
+
+4.
