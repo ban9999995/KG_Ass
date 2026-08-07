@@ -205,3 +205,178 @@
        4. node_log -> 节点 节点名|task_id / step_log  -> 业务 -> 业务函数
 
 3. 导入节点: node_pdf_to_md
+   minerU准备工作:
+      minerU -> 支持在线或者本地部署的文件解析工具 -> pdf/ppt -> 结构化数据md
+      使用:
+         1. 申请解析地址 token / 文件名 -> minerU -> 上传文件的地址
+            token = "API管理页面自定创建的token"
+            url = "https://mineru.net/api/v4/file-urls/batch"
+            header = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+            data = {
+                "files": [
+                    {"name":"demo.pdf", "data_id": "abcd"},
+                    {"name":"demo.pdf", "data_id": "abcd"},
+                    {"name":"demo.pdf", "data_id": "abcd"},
+                ],
+                "model_version":"vlm"  ->  pipeline（默认）/ vlm(推荐) / MinerU-HTML,
+                "callback":"回调公网接口"
+            }
+            response = requests.post(url,headers=header,json=data)
+            {
+              "code": 0,
+              "data": {
+                "batch_id": "2bb2f0ec-a336-4a0a-b61a-241afaf9cc87",  -> 后续第三步,方案2的解析状态获取标识!
+                "file_urls": ["https://***"] -> 上传文件地址
+              },
+              "msg": "ok",
+              "trace_id": "c876cd60b202f2396de1f9e39a1b0172"
+            }
+         2. 向指定的地址上传文件即可(http) [minerU就开始解析了]
+            https://*** -> minerU的文件服务器地址 -> put请求方式 文件 -> 传递进去就可以 -> 开始解析了
+            上传文件不是minerU的功能接口!!!
+         3. 方案1: 接口回调 [第一步]申请上传的时候,就配置一个回调的接口(公网接口)! 当minerU解析完,自动调用我们的接口告诉我们已经完事了和下载地址
+            方案2: 轮询获取状态,间隔时间申请查看解析状态,解析完成,获取解析md下载地址即可
+                token = "API管理页面自定创建的token"
+                batch_id = "上一步批量提交返回的 batch_id"
+                url = f"https://mineru.net/api/v4/extract-results/batch/{batch_id}"
+                header = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {token}"
+                }
+
+                res = requests.get(url, headers=header)
+                {
+                      "code": 0,
+                      "data": {
+                        "batch_id": "2bb2f0ec-a336-4a0a-b61a-241afaf9cc87",
+                        "extract_result": [
+                          {
+                            "file_name": "example.pdf",
+                            "state": "done",
+                            "err_msg": "",
+                            "full_zip_url": "https://cdn-mineru.openxlab.org.cn/pdf/018e53ad-d4f1-475d-b380-36bf24db9914.zip"
+                          }
+                        ]
+                      },
+                      "msg": "ok",
+                      "trace_id": "c876cd60b202f2396de1f9e39a1b0172"
+                    }
+                md -> 下载url出来 -> res['data']['extract_result'][0]['full_zip_url']
+      配置检查:
+        .env
+           sk-I9fHTEtnbAfHc3B4kVSXt7HFsnEQH7vnOj7MlFn4RQLqqJwg
+           # mineru api以及url处理地址！
+           MINERU_API_TOKEN=sk-I9fHTEtnbAfHc3B4kVSXt7HFsnEQH7vnOj7MlFn4RQLqqJwg
+           MINERU_BASE_URL=https://mineru.net/api/v4
+        常量配置  rag/import_/config.py
+            # MinerU 模型版本配置（vlm = 视觉语言模型，适合PDF/图片高精度解析）
+            MINERU_MODEL_VERSION = "vlm"
+            # MinerU 任务轮询最大超时时间（单位：秒），超过则判定任务失败
+            # 600 -> 一个pdf 约等于 1秒
+            MINERU_POLL_TIMEOUT_SECONDS = 600
+            # MinerU 任务轮询间隔时间（单位：秒），每隔多久查询一次任务状态
+            MINERU_POLL_INTERVAL_SECONDS = 3
+            # MinerU 文件下载超时时间（单位：秒），下载文件超过此时长则中断
+            MINERU_DOWNLOAD_TIMEOUT_SECONDS = 30
+   节点的作用理解:
+      将非结构化的数据 -> minerU -> 结构化数据md
+      非结构化的文件地址 -> minerU -> 本地生成结构化的md文件 -> 文件地址 -> md_path
+   节点需要的参数
+      入参:  task_id , pdf_path , local_dir
+      出参:  md_path
+   节点步骤的分析:
+      1. 获取请求参数并且校验 -> 函数  pdf_path , local_dir
+         validate_data_and_paths(state) -> tuple[Path,Path]
+         步骤1: 获取参数 pdf_path , local_dir -> str
+         步骤2: 非空校验
+               pdf_path  -> 空 -> 不行 -> error
+               local_dir -> 空 -> 行   -> warning
+         步骤3: 将字符串转成Path
+         步骤4: 存在性校验
+               pdf_path -> 对应的文件 -> 没有 -> error FileNotFoundError
+               local_dir -> 对应的文件夹-> 没有 -> warning 创建即可
+         步骤5: 返回结果  Path
+      2. minerU申请解析和文件上传以及轮询获取解析结果 -> zip_url
+         upload_pdf_and_poll(pdf_path_obj:Path) -> str:
+         1. 向minerU申请文件上传地址(获取上传地址/batch_id)
+         2. 向指定地址发起请求上传pdf文件
+         3. 使用batch_id轮询获取解析结果,提取zip_url
+      3. md文件的压缩包下载,并且解压和重命名问题 -> md_path
+      4. 更新state状态 md_path并且返回state
+   节点技术点总结:
+
+3. http超文本传输协议和requests使用用说明
+   http协议
+      概念: http超文本传输协议  客户端 -- 服务端
+                 ----> 请求报文 -->
+           客户端                  服务端
+                 <--- 响应报文 ---
+      数据包:
+         请求报文: 4部分
+              请求行:请求方式[空格]请求地址[控制]协议版本\n\r   -> 我们请求的服务器资源地址和请求方式
+              请求头:key=value
+                    ....                                  -> minerU 申请文件上传地址: 1. 文件名 -> 请求体 2. token -> 请求头
+                    ....                                  -> 请求数据包中除了正文的数据的一些额外描述!  登录功能: 账号和密码 -> 请求体  user-agent: 什么浏览器
+              请求空行:\n\r\n\r
+              请求体: 请求的数据等等                         -> 请求的正文数据,本质是流, 字符 + 字节
+         响应报文: 4部分
+              状态行: 协议版本[空格]状态码\n\r                -> 浏览器看的,是否响应成功!!! 状态码 -> 本次请求的网络状态 200
+              响应头: key=value
+                      ....                                -> 服务端返回数据的额外信息 返回数据的长度 数据类型等等
+                                                          -> fastapi下载一张图片:  图片 -> 响应体 || 响应头 content_disposition attachment
+              响应空行:
+              响应体: 响应的数据                             -> 返回的数据
+      请求方式:
+          请求行:GET[空格]请求地址[控制]协议版本\n\r
+          请求方式有哪些? GET POST PUT DELETE
+          请求方式有什么影响? 请求方式影响请求报文的数据结构! 不会影响响应报文的数据结构(固定4部分)
+             GET / DELETE 轻量级:  请求报文只有两部分  请求行 请求方式[空格]请求地址[控制]协议版本\n\r 请求头  key=value
+             POST / PUT   重量级:  请求报文有四部分 请求行 请求头 请求空行 请求体
+          怎么选择请求方式呢?
+             1. 你是否需要请求体
+             2. 请求的动作 (restful)
+          需求1: 上传头像  头像->字节->请求体 + 更新 -> put
+          需求2: 登录功能(账号和密码)  账号和密码 -> 字符串 -> 暴漏不好 别再路径 -> 请求体 -> post
+          需求3: 查询所有学生信息(没有参数)  没有参数 -> 获取 -> get
+          需求4: 查询指定id的学生信息(id=x)  id -> 隐私不算 -> 字符 -> url/1 -> get
+
+          POST/PUT传递参数: 请求体传递参数 请求体流 字符串 字节 json
+          GET/DELETE传递参数: 路径传参 / ? 后传递参数  请求方式[空格]url  /user/1 ?key=value[控制]协议版本
+          传递参数:
+             1. 路径传递参数  /user/1                   get / delete    put/post
+             2. 查询传递参数  url?key=value&key=value   get / delete    put/post
+             3. 请求体字符参数  json字符串               put/post
+             4. 请求体字节参数  文件...                  put/post
+          路径和查询参数有啥区别?
+             资源的标识 -> 路径
+             资源的参数 -> ? 后
+             1. 查询指定id = x 学生的信息   path  -> 对应的资源唯一标识
+             2. 查询年龄大于18的学生信息     param/query
+             3. 查询年龄等于18的学生信息     param/query
+      响应状态码:
+         状态行: 协议版本[空格]状态码\n\r
+         1xx  101 102                   中继状态   不用管
+         2xx  200 202                   成功状态   不用管
+         3xx  304 302                   间接成功   不用管
+         4xx  404 400 403 405 402 412   客户端问题        html -->   ---> fastapi  掌柜智库 -->  500  --> minerU
+         5xx  500 503 501               服务端问题
+
+      总结:
+        1. 选择合适的请求方式很重要 get / delete  / put / post
+        2. 选择合适的传参方式很重要  path /  param  / 请求体
+        3. 理解响应状态码含义很重要  1 2 3 4 5
+   requests的使用
+       import requests 客户端的角色发起请求
+       请求:
+       response = requests.get/post/put/delete(传递参数 url="地址", params=dict ? ? , data=请求体的字节数据 , json=请求体的字符串数据 , timeout=超时时间)
+            get 路径参数 requests.get(url="/user/1")
+            delete param id=1参数  requests.delete(url="/user?id=1" || url="/user" ,params={"id":1})
+            想minerU发起请求传递header和json  requests.post(url,headers=header,json=json)
+            想指定的地址上传要解析的文件 requests.put(url,data=文件的字节数据)
+       响应:
+       响应状态码:  response.status_code
+       响应体数据:  @property response.content() -> 响应体的字节数据 / @property text() -> 响应体的文本数据"json" / json(x,x,x) -> 响应体的json字符串 -> 转dict
+        @property 1. 函数没有参数 2. 只读模型
