@@ -1,0 +1,185 @@
+
+1. 导入主图搭建和测试
+   1.1 导入流程回顾
+                       ----------md--------------->
+    任务分析(node_entry)                                md图片处理节点(node_md_img) -> 文档智能切割(node_document_split)  -> 主体识别(node_item_name_recognition) -> 向量化处理(node_embedding) -> 向量数据库导入(node_import_milvus)
+                       -> pdf解析节点(node_pdf_to_md)
+   1.2 存储向量库设计
+       文档级别的集合: 存储每个文档对应item_name [提问 -> lm -> item_name -> milvus item_name置信度比较 -> item_name]
+       item_name
+          pk file_title item_name sparse_vector  dense_vector
+       切块级别的集合: 存储文档对应的切块内容 content -> 内容多有一个对应item_name
+          chunk_id  parent_title title part file_title item_name content sparse_vector  dense_vector
+   1.3 分析state属性
+       langgraph => state => 4种 [1.全局 -> 场景1: 配置了输入和输出全局就是中间节点的数据限制 场景2: 所有节点的数据限制  2.上下文 (作用范围也是全局 所有节点 | 只是用于读取的数据 context=)  3. 输入 -> 入口节点的数据类型  4.输出 -> 输出的限制]
+       全局state => 属性 => 每个节点的业务需求指定!!!
+
+        import json
+        from typing import TypedDict
+        import copy
+
+        """
+         @dataclass -> 初始化方法 配置类和实体类
+         BaseModel -> 初始化方法 严格模式 json处理 -> fastapi
+         TypedDict -> langgraph  -> return {}
+        """
+
+        class ImportGraphState(TypedDict):
+            task_id:str                 # 标记任务的唯一标识
+
+            local_file_path:str         # 标记输入的原文件地址(不确定类型)
+            md_path:str                 # 明确的md地址 / 后续处理完图片地址
+            pdf_path:str                # 明确的pdf的地址
+            file_title:str              # 文件名 xx.md -> xx
+            local_dir:str               # 输出文件的文件夹地址
+
+            md_content:str              # md的内容
+
+            is_md_read_enabled:bool     # 是md文件
+            id_pdf_read_enabled:bool    # 是pdf文件
+
+            chunk:list[dict]            # 切块的内容(没有向量)
+
+            item_name:str               # 每个文档提取的唯一标识! 多个文档可能相同(烫金机维修/销售/售后手册)
+
+            embeddings_content:list[dict] # 切块的内容(有向量)
+
+        # 默认对象 模板
+        graph_default_state: ImportGraphState = {
+            "task_id": "",
+            "is_pdf_read_enabled": False,
+            "is_md_read_enabled": False,
+            "local_dir": "",
+            "local_file_path": "",
+            "pdf_path": "",
+            "md_path": "",
+            "file_title": "",
+            "md_content": "",
+            "chunks": [],
+            "item_name": "",
+            "embeddings_content": [],
+        }
+
+
+        # 创建指定参数的对象
+        def create_default_state(**kwargs) -> ImportGraphState:
+            """
+              创建对象可以修改参数
+            :param **kwargs 传入:key -> 修改属性名 =value 修改的属性值 , key=value   接收: 字典 {key:value,key:value}
+            :return:
+            """
+
+            # dict -> update -> {key:value} -> 修改原有值对应的key
+            """
+              深拷贝: 创建对象,会复制对象有嵌套的属性  适合有集合或者元组这类的嵌套属性  全新的对象 = copy.deepcopy(对象)
+              浅拷贝: 创建对象,只会复制对象没有嵌套的属性  适合没有集合或者元组这类的嵌套属性  对象.copy() / copy.copy(对象)
+            """
+            state = copy.deepcopy(graph_default_state)
+            state.update(kwargs)
+            return state
+
+        # 创建一个默认对象
+        def get_default_state() -> ImportGraphState:
+            state = copy.deepcopy(graph_default_state)
+            return state
+   1.4 准备主图节点和业务函数
+       位置问题:
+         节点 -> process -> import_ -> agent -> nodes
+         业务 -> rag     -> import_ -> .py
+       解读节点和业务:
+         节点结构
+            @node_log("节点名") -> 节点的info日志输出
+            def 节点名函数(state->ImportGraphState) -> ImportGraphState
+               add_running_task(task_id,"节点名")  -> 记录节点状态 {task_id:[运行的节点]}
+               # 调用业务函数 rag
+               state =  rag业务函数(state)
+               add_done_task(task_id,"节点名")     -> 记录节点状态 {task_id:[完成的节点]}
+               return state -> 导入流程没有并发!
+   1.5 创建主图对象和测试
+        from langgraph.constants import END
+        from langgraph.graph import StateGraph
+        from app.process.import_.agent.state import ImportGraphState
+        from app.process.import_.agent.nodes.node_entry import node_entry
+        from app.process.import_.agent.nodes.node_pdf_to_md import node_pdf_to_md
+        from app.process.import_.agent.nodes.node_md_img import node_md_img
+        from app.process.import_.agent.nodes.node_document_split import node_document_split
+        from app.process.import_.agent.nodes.node_item_name_recognition import node_item_name_recognition
+        from app.process.import_.agent.nodes.node_bge_embedding import node_bge_embedding
+        from app.process.import_.agent.nodes.node_import_milvus import node_import_milvus
+        from app.shared.runtime.logger import logger
+
+        # 1. 创建图的构建对象 StateGraph(state)
+        import_graph_builder = StateGraph(ImportGraphState)
+
+        # 2. 添加图节点
+        import_graph_builder.add_node(node_entry)
+        import_graph_builder.add_node(node_pdf_to_md)
+        import_graph_builder.add_node(node_md_img)
+        import_graph_builder.add_node(node_document_split)
+        import_graph_builder.add_node(node_item_name_recognition)
+        import_graph_builder.add_node(node_bge_embedding)
+        import_graph_builder.add_node(node_import_milvus)
+
+        # 3. 添加图的边
+        #import_graph_builder.add_edge(START,"node_entry")
+        import_graph_builder.set_entry_point("node_entry")
+
+
+        # 条件边的路由函数,允许我们使用全局state
+        def after_node_entry(state:ImportGraphState)-> str:
+            # 条件边! 如果是pdf -> node_pdf_to_md 如果是md -> node_md_img  如果都不是 -> END
+            if state.get("is_pdf_read_enabled",False):
+                # 位置 / 级别 / 内容 有依据 + 结果!!
+                logger.info(f"传入的文件地址:{state.get('local_file_path')},文件类型为pdf,跳转到node_pdf_to_md节点!")
+                return "node_pdf_to_md"
+            if state.get("is_md_read_enabled",False):
+                logger.info(f"传入的文件地址:{state.get('local_file_path')},文件类型为md,跳转到node_md_img节点!")
+                return "node_md_img"
+            else:
+                logger.info(f"传入的文件地址:{state.get('local_file_path')},文件既不是md又不是pdf,无法处理,直接跳到END节点!")
+                return END
+        """
+          条件边添加:
+            参数1: 起始节点
+            参数2: 路由函数 (state -> 判断 -> 目标节点名)
+            参数3: path_map -> dict -> 场景1: 静态测试必须显示说明条件路由函数返回值对应的目标节点  key[返回的值]:value [目标节点]
+                                      场景2: 路由函数返回的值不等于节点名,path_map指定!
+
+        """
+        import_graph_builder.add_conditional_edges(
+            "node_entry",
+                after_node_entry,
+            {
+                "node_pdf_to_md":"node_pdf_to_md",
+                "node_md_img":"node_md_img",
+                END:END
+            }
+        )
+
+        # 静态边
+
+        import_graph_builder.add_edge("node_pdf_to_md","node_md_img")
+        import_graph_builder.add_edge("node_md_img","node_document_split")
+        import_graph_builder.add_edge("node_document_split","node_item_name_recognition")
+        import_graph_builder.add_edge("node_item_name_recognition","node_bge_embedding")
+        import_graph_builder.add_edge("node_bge_embedding","node_import_milvus")
+        import_graph_builder.add_edge("node_import_milvus",END)
+
+        # 4. 编译对象即可
+        import_graph_app = import_graph_builder.compile()
+
+        from app.shared.runtime.logger import logger
+        from app.process.import_.agent.state import ImportGraphState,create_default_state
+        from app.process.import_.agent.main_graph import import_graph_app
+        import json
+        # 动态测试 运行查看状态 -> 根据参数不同 -> 没有走全整个图的节点
+        state = create_default_state(task_id="007",local_file_path="./xxx.md")
+        logger.info(f"开始进行测试,输入的数据:{json.dumps(state,indent=4,ensure_ascii=False)}")
+        result = import_graph_app.invoke(state)
+        logger.info(f"测试结束,输出的数据:{json.dumps(result,indent=4,ensure_ascii=False)}")
+
+        # 静态测试 不关注运行的参数,单纯的输出图的节点执行全部可能
+        import_graph_app.get_graph().print_ascii()
+
+2. 导入节点: node_entry
+3. 导入节点: node_pdf_to_md
