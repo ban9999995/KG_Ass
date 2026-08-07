@@ -182,4 +182,26 @@
         import_graph_app.get_graph().print_ascii()
 
 2. 导入节点: node_entry
+   节点的作用和意义:
+       导入流程的入口节点! 进行导入的文件类型判断! 分发到不同的解析节点!
+       后续扩展文件类型,需要再这个节点添加分发逻辑即可!
+       node_entry -> state -> 条件边 ->  state -> 目标节点
+   节点需要的参数:
+       使用参数 :  task_id , local_file_path : str
+       生成/修改:  md_path is_md_read_enabled  pdf_path is_pdf_enabled  file_title
+   节点实现的步骤:
+       1. state中获取参数 local_file_path
+       2. [每个节点参数校验工作->健壮性->鲁棒性] local_file_path非空判断即可
+       3. 判断文件类型,后缀名(.md / .pdf)
+       4. 是md -> 修改 md_path is_md_read_enabled -> 正值  pdf_path is_pdf_enabled -> 反值
+       5. 是pdf -> 修改 md_path is_md_read_enabled -> 反值  pdf_path is_pdf_enabled -> 正值
+       6. 都不是 -> md_path is_md_read_enabled -> 反值  pdf_path is_pdf_enabled -> 反值
+       7. local_file_path对应的文件名获取到file_title
+       8. 更新state并返回即可
+   核心技术点:
+       1. 梳理我们项目开发思路 前置做好校验 考虑业务实现
+       2. 步骤 节点 -> 业务
+       3. Path的使用  1. Path对象创建 Path() | Path(地址)  2. Path基本属性  .name .stem .suffix
+       4. node_log -> 节点 节点名|task_id / step_log  -> 业务 -> 业务函数
+
 3. 导入节点: node_pdf_to_md

@@ -38,7 +38,7 @@ def after_node_entry(state:ImportGraphState)-> str:
         logger.info(f"传入的文件地址:{state.get('local_file_path')},文件类型为md,跳转到node_md_img节点!")
         return "node_md_img"
     else:
-        logger.info(f"传入的文件地址:{state.get('local_file_path')},文件既不是md又不是pdf,无法处理,直接跳到END节点!")
+        logger.warning(f"传入的文件地址:{state.get('local_file_path')},文件既不是md又不是pdf,无法处理,直接跳到END节点!")
         return END
 """
   条件边添加:
