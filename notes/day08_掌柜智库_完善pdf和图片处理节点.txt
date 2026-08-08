@@ -1,0 +1,127 @@
+1. 导入节点: node_pdf_to_md
+   minerU准备工作:
+      minerU -> 支持在线或者本地部署的文件解析工具 -> pdf/ppt -> 结构化数据md
+      使用:
+         1. 申请解析地址 token / 文件名 -> minerU -> 上传文件的地址
+            token = "API管理页面自定创建的token"
+            url = "https://mineru.net/api/v4/file-urls/batch"
+            header = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            }
+            data = {
+                "files": [
+                    {"name":"demo.pdf", "data_id": "abcd"},
+                    {"name":"demo.pdf", "data_id": "abcd"},
+                    {"name":"demo.pdf", "data_id": "abcd"},
+                ],
+                "model_version":"vlm"  ->  pipeline（默认）/ vlm(推荐) / MinerU-HTML,
+                "callback":"回调公网接口"
+            }
+            response = requests.post(url,headers=header,json=data)
+            {
+              "code": 0,
+              "data": {
+                "batch_id": "2bb2f0ec-a336-4a0a-b61a-241afaf9cc87",  -> 后续第三步,方案2的解析状态获取标识!
+                "file_urls": ["https://***"] -> 上传文件地址
+              },
+              "msg": "ok",
+              "trace_id": "c876cd60b202f2396de1f9e39a1b0172"
+            }
+         2. 向指定的地址上传文件即可(http) [minerU就开始解析了]
+            https://*** -> minerU的文件服务器地址 -> put请求方式 文件 -> 传递进去就可以 -> 开始解析了
+            上传文件不是minerU的功能接口!!!
+         3. 方案1: 接口回调 [第一步]申请上传的时候,就配置一个回调的接口(公网接口)! 当minerU解析完,自动调用我们的接口告诉我们已经完事了和下载地址
+            方案2: 轮询获取状态,间隔时间申请查看解析状态,解析完成,获取解析md下载地址即可
+                token = "API管理页面自定创建的token"
+                batch_id = "上一步批量提交返回的 batch_id"
+                url = f"https://mineru.net/api/v4/extract-results/batch/{batch_id}"
+                header = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {token}"
+                }
+
+                res = requests.get(url, headers=header)
+                {
+                      "code": 0,
+                      "data": {
+                        "batch_id": "2bb2f0ec-a336-4a0a-b61a-241afaf9cc87",
+                        "extract_result": [
+                          {
+                            "file_name": "example.pdf",
+                            "state": "done",
+                            "err_msg": "",
+                            "full_zip_url": "https://cdn-mineru.openxlab.org.cn/pdf/018e53ad-d4f1-475d-b380-36bf24db9914.zip"
+                          }
+                        ]
+                      },
+                      "msg": "ok",
+                      "trace_id": "c876cd60b202f2396de1f9e39a1b0172"
+                    }
+                md -> 下载url出来 -> res['data']['extract_result'][0]['full_zip_url']
+      配置检查:
+        .env
+           sk-I9fHTEtnbAfHc3B4kVSXt7HFsnEQH7vnOj7MlFn4RQLqqJwg
+           # mineru api以及url处理地址！
+           MINERU_API_TOKEN=sk-I9fHTEtnbAfHc3B4kVSXt7HFsnEQH7vnOj7MlFn4RQLqqJwg
+           MINERU_BASE_URL=https://mineru.net/api/v4
+        常量配置  rag/import_/config.py
+            # MinerU 模型版本配置（vlm = 视觉语言模型，适合PDF/图片高精度解析）
+            MINERU_MODEL_VERSION = "vlm"
+            # MinerU 任务轮询最大超时时间（单位：秒），超过则判定任务失败
+            # 600 -> 一个pdf 约等于 1秒
+            MINERU_POLL_TIMEOUT_SECONDS = 600
+            # MinerU 任务轮询间隔时间（单位：秒），每隔多久查询一次任务状态
+            MINERU_POLL_INTERVAL_SECONDS = 3
+            # MinerU 文件下载超时时间（单位：秒），下载文件超过此时长则中断
+            MINERU_DOWNLOAD_TIMEOUT_SECONDS = 30
+   节点的作用理解:
+      将非结构化的数据 -> minerU -> 结构化数据md
+      非结构化的文件地址 -> minerU -> 本地生成结构化的md文件 -> 文件地址 -> md_path
+   节点需要的参数
+      入参:  task_id , pdf_path , local_dir
+      出参:  md_path
+   节点步骤的分析:
+      1. 获取请求参数并且校验 -> 函数  pdf_path , local_dir
+         validate_data_and_paths(state) -> tuple[Path,Path]
+         步骤1: 获取参数 pdf_path , local_dir -> str
+         步骤2: 非空校验
+               pdf_path  -> 空 -> 不行 -> error
+               local_dir -> 空 -> 行   -> warning
+         步骤3: 将字符串转成Path
+         步骤4: 存在性校验
+               pdf_path -> 对应的文件 -> 没有 -> error FileNotFoundError
+               local_dir -> 对应的文件夹-> 没有 -> warning 创建即可
+         步骤5: 返回结果  Path
+      2. minerU申请解析和文件上传以及轮询获取解析结果 -> zip_url
+         upload_pdf_and_poll(pdf_path_obj:Path) -> str:
+         1. 向minerU申请文件上传地址(获取上传地址/batch_id)
+         2. 向指定地址发起请求上传pdf文件
+         3. 使用batch_id轮询获取解析结果,提取zip_url
+      3. md文件的压缩包下载,并且解压和重命名问题 -> md_path
+         md地址:Path =  download_zip_and_extract_md(zip_url,local_dir_obj,local_file_path_obj.stem)
+         本意: zip_url -> 下载 -> .zip -> 解压了 ->  md -> md地址
+         1. 下载文件到output中,名称为 文件名.zip
+         2. 检查是否存在解压的文件夹 (/output/文件名)
+            有   -> 清空原有的文件夹
+            没有 -> 创建新的文件夹
+         3. 解压文件到文件夹中
+         4. 如果文件名叫full.md重命名-> 文件名.md
+         5. 返回地址即可
+      4. 更新state状态 md_path并且返回state
+   节点技术点总结:
+      Path对象的创建: Path() 相对地址 Path(__file__)  Path(Str地址)   Path(Path)
+                    iterdir() -> 没有规则直接查找子文件/文件夹  glob() 根据规则查找子文件或者子文件夹[不会递归]  rglob() [**/ 会递归]
+                    new_path : with_name(新的文件名)
+                    md_file_obj =   oldPath.rename(命名的新的Path  名称 -> 运行文件夹 || 全名称  new_path)
+      MinerU使用流程: 1. 申请文件上传地址 2. 向指定地址进行文件上传 3. 轮询获取解析结果
+      requests的使用:    requests. get post put delete -> request(method="post")
+                                   1.要请求体 post put 2. 动作行为  更新头像 -> put
+                                   2.传递参数方式 path params -> 唯一标识 path 筛选参数 params  json+字节形式  -> put post  1.无法路径条件json 字节 2. 隐私数据  3. 超过2kb的字符串
+                                   3. requests.post(url,headers=,params=,json=,data=,timeout)
+                                   4. 结果解析  response . status_code / json() / content / text
+                                   5. requests.Session()  session.trust_env = False   session = requests
+      shutil的使用:  .rmtree(文件夹) 删除文件夹   .unpack_archive(要解压的压缩文件,解压的地址)  make_archive(文件名 xx ,压缩格式 zip , 压缩的文件或者文件夹)
+
+
+2. 图片处理节点: node_md_img

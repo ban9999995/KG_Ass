@@ -1,11 +1,12 @@
 import asyncio
 import time
 from pathlib import Path
+import shutil  # shell utils
 
 from app.process.import_.agent.state import ImportGraphState
 from app.rag.import_.config import PARSE_PDF_OUTPUT_DIR, MINERU_MODEL_VERSION, MINERU_DOWNLOAD_TIMEOUT_SECONDS, \
     MINERU_POLL_INTERVAL_SECONDS, MINERU_POLL_TIMEOUT_SECONDS
-from app.shared.runtime.logger import logger ,PROJECT_ROOT
+from app.shared.runtime.logger import logger, PROJECT_ROOT, step_log
 from app.infra.config.providers import infra_config
 import requests
 
@@ -20,7 +21,7 @@ import requests
 #                pdf_path -> 对应的文件 -> 没有 -> error FileNotFoundError
 #                local_dir -> 对应的文件夹-> 没有 -> warning 创建即可
 #          步骤5: 返回结果  Path
-
+@step_log("validate_data_and_paths")
 def validate_data_and_paths(state:ImportGraphState) -> tuple[Path]:
     # 步骤1: 获取参数 pdf_path , local_dir -> str
     pdf_path:str  = state.get("pdf_path")
@@ -49,6 +50,7 @@ def validate_data_and_paths(state:ImportGraphState) -> tuple[Path]:
 
 
 #upload_pdf_and_poll(pdf_path_obj:Path) -> str:
+@step_log("upload_pdf_and_poll")
 def upload_pdf_and_poll(pdf_path_obj:Path) -> str:
     # 1. 向minerU申请文件上传地址(获取上传地址/batch_id)
     token = infra_config.mineru_config.api_key
@@ -130,7 +132,7 @@ def upload_pdf_and_poll(pdf_path_obj:Path) -> str:
             logger.error(f"轮询获取解析结果超时,提前终止业务!")
             raise TimeoutError(f"轮询获取解析结果超时,提前终止业务!")
         # 3.2 没有申请状态请求
-        poll_response = requests.get(url,headers=header)
+        poll_response = requests.get(url,headers=header,timeout=MINERU_DOWNLOAD_TIMEOUT_SECONDS)
         # 3.3 判断网络状态码
         if poll_response.status_code != 200:
             # 不等于200,但是可以给与机会! 5xx是给机会! 服务器的问题可能修改!!
@@ -168,10 +170,83 @@ def upload_pdf_and_poll(pdf_path_obj:Path) -> str:
             continue
 
 
+#   md地址:Path =  download_zip_and_extract_md(zip_url,local_dir_obj,local_file_path_obj.stem)
+#          本意: zip_url -> 下载 -> .zip -> 解压了 ->  md -> md地址
+#          1. 下载文件到output中,名称为 文件名.zip
+#          2. 检查是否存在解压的文件夹 (/output/文件名)
+#             有   -> 清空原有的文件夹
+#             没有 -> 创建新的文件夹
+#          3. 解压文件到文件夹中
+#          4. 如果文件名叫full.md重命名-> 文件名.md
+#          5. 返回地址即可
+@step_log("download_zip_and_extract_md")
+def download_zip_and_extract_md(zip_url:str,local_dir_obj:Path,file_name:str) -> Path:
+    # 1. 下载文件到output中,名称为 文件名.zip
+    # 网络请求: get post put delete -> 请求数据格式 -> 响应体
+    response = requests.get(url=zip_url,timeout=MINERU_DOWNLOAD_TIMEOUT_SECONDS)
+    # 网络状态码
+    status_code = response.status_code
+    if status_code != 200:
+        logger.error(f"向minerU返回的下载文件地址:{zip_url}请求,出现响应状态错误:{status_code},业务无法继续,提前终止!")
+        raise RuntimeError(f"向minerU返回的下载文件地址:{zip_url}请求,出现响应状态错误:{status_code},业务无法继续,提前终止!")
+    # 写到output/文件名.zip
+    zip_file_obj:Path = local_dir_obj / f"{file_name}.zip"
+    zip_file_obj.write_bytes(data=response.content)
+    # 2. 检查是否存在解压的文件夹 (/output/文件名)
+    # 检查文件夹是否存在
+    zip_file_dir_obj:Path = local_dir_obj / file_name
+    if zip_file_dir_obj.is_dir():
+        # 清空文件夹
+        shutil.rmtree(zip_file_dir_obj)  # 递归清空文件夹内容 + 文件夹本身
+    zip_file_dir_obj.mkdir(parents=True,exist_ok=True)
+    """
+       shutil . rmtree(文件夹)  递归清空文件夹
+                unpack_archive(filename, extract_dir=None, format=None  解压缩
+                make_archive(烫金机使用手册, zip, root_dir=文件夹或者文件夹地址 压缩
+    """
+    # 解压缩
+    shutil.unpack_archive(filename=zip_file_obj,extract_dir=zip_file_dir_obj)
+    # 3.检查下文件夹中是否存在md文件   full.md -> file_name.md || 文件名.md
+    """
+     Path  name stem suffix parents parent 
+           is_file is_dir  mkdir 
+           iterdir() -> 生成器 -> 遍历文件夹中的每个文件和子文件夹 [找所有,不分类型]
+           glob(pattern) -> 生成器 -> 根据规则查询符合文件或者文件夹 [根据规则匹配]  /规则  [第一层获取]
+           rglob(pattern) -> 生成器 -> 根据规则查询符合文件或者文件夹 [根据规则匹配] **/规则  [递归获取]
+    """
+    md_file_list:list[Path] =  list(zip_file_dir_obj.rglob("*.md"))
+    if not md_file_list:
+        logger.error(f"向minerU返回的下载文件地址:{zip_url}请求,文件下载成功,内部没有md文件!业务无法继续,提前终止!!")
+        raise FileNotFoundError(f"向minerU返回的下载文件地址:{zip_url}请求,文件下载成功,内部没有md文件!业务无法继续,提前终止!!")
+    # 考虑重命名的问题
+    # 可能1: 原文件名.md
+    for md_file in md_file_list:
+        if md_file.stem == file_name:
+            logger.info(f"向minerU返回的下载文件地址:{zip_url}请求,文件下载成功,文件地址为:{md_file},跳出循环即可!")
+            return md_file
+    # 可能2: full.md
+    for full_md_file in md_file_list:
+        if full_md_file.stem == 'full':
+            # 重命名并返回即可
+            # rename -> 剪切 ctrl + x | ctrl + v
+            # rename(相对地址 -> 剪切到启动的类所在的文件夹中 nodes | 绝对地址 指向具体)
+            #md_file_obj:Path = full_md_file.rename(f"{file_name}.md")
+            #  新的path xx/xxx/file_name.md  = full_md_file(xx/xxx/full.md).with_name(f"{file_name}.md")
+            md_file_obj:Path = full_md_file.rename(full_md_file.with_name(f"{file_name}.md"))
+            logger.info(f"向minerU返回的下载文件地址:{zip_url}请求,文件下载成功,文件地址为:{md_file_obj},跳出循环即可!")
+            return md_file_obj
+    # 证明啥! 有md文件 命名既不是full 又不是 文件名.md
+    logger.error(f"向minerU返回的下载文件地址:{zip_url}请求,文件下载成功,解压后文件名不叫full或者文件名,请根据官网明确后,再解析!")
+    raise FileNotFoundError(f"向minerU返回的下载文件地址:{zip_url}请求,文件下载成功,解压后文件名不叫full或者文件名,请根据官网明确后,再解析!")
+
+@step_log("parse_pdf_to_markdown")
 def parse_pdf_to_markdown(state: ImportGraphState) -> ImportGraphState:
     # 1. 获取请求参数并且校验 -> 函数  pdf_path , local_dir
     pdf_path_obj,local_dir_obj = validate_data_and_paths(state)
     # 2. minerU申请解析和文件上传以及轮询获取解析结果
     full_zip_url:str = upload_pdf_and_poll(pdf_path_obj)
-
+    # 3. 下载并解压md文件以及重命名工作
+    md_path_obj:Path = download_zip_and_extract_md(full_zip_url,local_dir_obj,pdf_path_obj.stem)
+    # 4. 更新state md_path属性
+    state['md_path'] = str(md_path_obj)
     return state
