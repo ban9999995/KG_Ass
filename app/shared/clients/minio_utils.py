@@ -82,6 +82,7 @@ def get_minio_client() -> Minio:
     :return: 全局唯一的MinIO客户端对象
     """
     # 声明使用全局变量（修改全局变量需显式声明）
+    # global修改全局!
     global _minio_client
 
     # 懒加载：仅在客户端未初始化时执行创建逻辑

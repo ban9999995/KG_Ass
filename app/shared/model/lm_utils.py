@@ -9,6 +9,20 @@ from app.shared.runtime.logger import logger
 
 _DEFAULT_LLM_MODEL = "qwen3-32b"
 _DEFAULT_TEMPERATURE = 0.1
+# 缓存为用字典? 模型的种类更多 (大语言模型(切换参数)/视觉模型)
+# {key:str-> 模型的名字 : 模型对象 }
+# {(str模型的名字,bool True | False) :模型对象}
+# 变量= 缓存
+
+"""
+  如何限制模型返回json数据格式? 
+    1. 提示中强调返回数据格式
+    2. 提示词中添加json格式示例
+    3. 模型参数 json_format = json
+    4. 解析结果校验 -> JsonOutputParser()
+
+"""
+
 _llm_client_cache: dict[tuple[str, bool], ChatOpenAI] = {}
 
 
@@ -43,11 +57,13 @@ def get_llm_client(model: str | None = None, json_mode: bool = False) -> ChatOpe
 
     # 4. 配置参数组装：区分「国产模型私有参数」和「OpenAI通用参数」
     # extra_body：千问/即梦等国产模型专属私有参数（LangChain透传至API）
+    # enable_thinking 不是openapi标准的key !
     extra_body = {"enable_thinking": False}  # 千问专属：关闭思考链输出，减少冗余内容
     # model_kwargs：OpenAI通用参数，所有兼容API均支持
     model_kwargs = {}
     if json_mode:
         # 开启JSON标准输出模式，强制模型返回可解析的json_object
+        # openai的标准的key
         model_kwargs["response_format"] = {"type": "json_object"}
         logger.debug(f"[LLM客户端] 已开启JSON输出模式，模型将返回标准JSON结构")
 
@@ -58,8 +74,8 @@ def get_llm_client(model: str | None = None, json_mode: bool = False) -> ChatOpe
             temperature=lm_config.llm_temperature or _DEFAULT_TEMPERATURE,  # 低温度保证输出确定性（0~1）
             api_key=lm_config.api_key,  # API密钥
             base_url=lm_config.base_url,  # API基础地址（适配国产模型代理地址）
-            extra_body=extra_body,  # 国产模型私有参数透传
-            model_kwargs=model_kwargs,  # OpenAI通用参数
+            extra_body=extra_body,  # 非openai标准的key ChatOpenAI没有地址! -> 模型官方的参数介绍
+            model_kwargs=model_kwargs, # openapi标准的key
         )
     except LangChainException as e:
         raise Exception(f"[LLM客户端] 模型【{target_model}】初始化失败（LangChain层）：{str(e)}") from e
