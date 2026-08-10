@@ -1,0 +1,151 @@
+
+1. 图片处理节点: node_md_img
+   节点的作用理解:
+       将md_content内容中的图片进行意图识别和切换网络地址  ![](./) -> ![描述](http)
+       [描述] -> 模型识别 图片也有真正的作用了
+       (http) -> 任何位置进行显示
+     现在: md_path
+       1. 找到所有图片和图片对应的上下文信息
+       2. 交给视觉模型进行分意图识别 图片 =  语义
+       3. 将图片上传到文件服务器    图片 =  网络地址
+       4. 将md_content内容进行更新和替换 -> md_content
+       5. md_content内容备份 -> 文件名_new.md
+       6. 更新state [md_path / md_content]
+     最终: md_content / md_path -> 新的内容
+   节点的参数说明:
+     入参:
+           md_path -> images对应地址 -> md_content
+     出参:
+           md_path  md_content
+   配置文件检查:
+     minio的配置
+        MINIO_ENDPOINT=39.105.7.90:9000
+        MINIO_ACCESS_KEY=minioadmin
+        MINIO_SECRET_KEY=minioadmin
+        # minio的桶名不能使用 _  s3
+        MINIO_BUCKET_NAME=knowledge-base-files
+        MINIO_IMG_DIR=/upload-images
+        MINIO_SECURE=False
+     模型的配置
+        LLM_DEFAULT_MODEL=qwen-flash
+        #Qwen3系列小尺寸视觉理解模型，实现思考模式和非思考模式的有效融合，效果优于开源版Qwen3-VL-30B-A3B，响应速度快。全面升级图像/视频理解，支持长视频长文档等超长上下文、
+        #空间感知与万物识别；具备视觉2D/3D定位能力，胜任复杂现实任务。
+        VL_MODEL=qwen3-vl-flash
+        OPENAI_API_KEY=sk-ws-H.ELYPEXL.1Jns.MG2P48JylkakE8Q
+        #OPENAI_API_KEY=sk-48849600c0fa4aa7bfd709e1f47415ff
+        OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+        LLM_DEFAULT_TEMPERATURE=0.1
+     常量参数配置
+        SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+     公共类准备工作
+        minio的infra
+               class MinioGateway:
+
+                # 1.返回桶名
+                @property
+                def bucket_name(self):
+                    return infra_config.minio_config.bucket_name
+                # 2.图片的公共前缀
+                @property
+                def images_prefix(self):
+                    return infra_config.minio_config.minio_img_dir
+                # 3.返回客户端
+                @property
+                def minio(self):
+                    return get_minio_client()
+                # 4.拼接访问地址
+                def build_image_url(self,object_name:str) -> str:
+                    """
+                    拼接访问地址 注意: object_name 必须使用 / 开头
+                    :param object_name: /upload-images/文件名/图片名.jpg
+                    :return:
+                    """
+                    # 没有http / https :// + 端点 + 桶名 + 对象名
+                    prefix = "https://" if infra_config.minio_config.minio_secure else "http://"
+                    image_url = f"{prefix}{infra_config.minio_config.endpoint}/{infra_config.minio_config.bucket_name}{object_name}"
+                    logger.info(f"为:{object_name}拼接minio的访问地址为:{image_url}")
+                    return image_url
+
+            minio_gateway = MinioGateway()
+
+        模型的infra
+            class ModelProvider:
+                # 1. 获取大语言模型
+                def llm_model(self,model_name:str|None=None,json_mode:bool=False):
+                    return get_llm_client(model=model_name,json_mode=json_mode)
+                # 2. 获取视觉模型
+                def vision_model(self,model_name:str):
+                    return get_llm_client(model=model_name)
+                # 重排序模型 嵌入式模型..
+            model_provider = ModelProvider()
+   节点的步骤分析:
+       md_path -> images对应地址 -> md_content  -> md_path content
+     1. 获取参数并且校验(state) -> md_content:str  md_path_obj:Path  images_path_obj:Path
+        validate_data_and_paths(state:ImportGraphState) -> tuple[str,Path,Path]
+        1.1 获取请求参数 md_path
+        1.2 非空校验 -> 空 -> error
+        1.3 md_path转成md_path_obj:Path
+        1.4 文件存在性校验 -> is_file() -> 不存在 -> error
+        1.5 基于md_path_obj读取文件内容 -> md_content -> state
+        1.6 基于md_path_obj获取images_path_obj对象
+        1.7 返回三个核心参数 ...
+     2. 图片的非空内容校验,为空提前终止,进行下一个节点images_path_obj [不需要封装成函数]
+        if images_path_obj 不是文件夹 / 是文件夹没有内容 -> return state [日志]
+     3. 查找images_path_obj每张图片对应的上下文信息(images_path_obj,md_content) -> [(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4]
+        extract_image_context_info(images_path_obj:Path,md_content:str) -> list[tuple[str,Path,tuple[str]]]
+        list
+        3.1 遍历循环images_path_obj每个文件 for Path in images_path_obj.iterdir() glob rglob
+        3.2 检查是不是图片(后缀名判断)
+        3.3 定义图片对应的正则编译对象 re.compile(r"\!\[.*?\]\(.*?" + re.escape(图片名)+r".*?\)")
+        3.4 调用正则编译对象去md_content找到匹配内容 .match [search] finditer findall [图片永远不会重复] -> Match
+        3.5 对Match对象进行非空检查,为空 -> 图片没有md_content应用 [下一张图片]
+        3.6 根据Match获取图片的定位信息 .start() .end()
+        3.7 上文 = md_content[start-100:start]  [  : )] 下文 = md_content(end,end+100)  [思考越界问题]
+        3.8 拼接个单个元素的原则 (path.name,path,(上,下))  list.append()
+        3.9 跳出循环,打印日志,返回结果 list
+     4. 调用视觉模型进行图片内容识别([(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4] , 文件名 md_path_obj.stem) -> {图片名:语义 ....}
+        call_vision_summary_images([(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4],文件名 md_path_obj.stem ) -> dict[str,str]
+        字典
+        4.1 获取视觉模型对象(infra vision...)
+        4.2 循环每张图片对应的上下文信息 (图片名,完成地址,(上,下文))
+        4.3 加载和拼接对应的提示词 load_prompts("image_summary",root_folder=stem,image_content=(上,下文))
+        4.4 提示词封装成Message HumanMessage(content=提示词)
+        4.5 封装一个调用 chains = 模型 | StrOutputParser() / JsonOutputParser()
+        4.6 调用模型的链 chains.invoke([human_message]) -> 结果要的字符串     模型.invoke([]) -> response . content
+        4.7 存储图片的函数  字典[图片名] = summary 结果要的字符串
+        4.8 打印日志 返回结果 return 字典
+     5. 调用minio将图片传递到文件服务器([(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4]) -> {图片名:http...}
+        upload_to_minio_return_url([(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4], 文件名 md_path_obj.stem) -> dict[str,str]
+        5.1 获取minio的客户端对象 infra.函数 -> @property
+        -------------------------------------------------------------------------------------------------
+        5.2 先根据固定的前缀查询存不存在图片  list_objects(桶名,前缀="图片固定的前缀infra/文件夹名") []
+            https://www.minio.org.cn/docs/minio/linux/developers/python/API.html#list_objects           一定要好好看官方文档 连一个/都不能查! 切记
+        5.3 如果当前文件夹存在图片,先删除 remove_objects(桶名,DeleteOject)
+            https://www.minio.org.cn/docs/minio/linux/developers/python/API.html#remove_objects
+        --------------------------------------------------------------------------------------------------
+        5.4 循环处理上下文件列表,获取每张图片信息 (图片名,地址,_)
+        5.5 minio中上传文件 fput_object [考虑上传minio报错的问题,不能因为一张图片的报错,影响整个业务]  for try...
+            https://www.minio.org.cn/docs/minio/linux/developers/python/API.html#fput_object
+        5.6 拼接每张图片对应的地址 infra (object_name -> /固定的图片前缀/文件夹名/文件名) -> url
+        5.7 记录当前图片对应的地址 {[图片名],图片地址}
+        5.8 返回字典(图片名|图片地址) 打印日志
+     6. 使用正则进行md_content内容的替换(md_content,{图片名:语义 ....},{图片名:http...}) -> 新的 md_content
+        replace_old_md_content(md_content,{图片名:网络地址},{图片名:语义描述}) -> str:
+        6.1 循环 图片名,网络地址  {图片名:网络地址}.items()
+        6.2 根据 图片名获取语义描述 图片名 / 语义 / 地址
+        6.3 编译一个替换正则对象 ![.*?](.*? image_name .*?) 编译后的正则对象
+        6.4 进行正则对象  md_content =   编译后的正则对象 ![](./xxxxx.jpg) .sub( 要替换入的新的内容 "![语义](网络地址)" , 在哪个内容上替换 md_content )
+        6.5 循环结束,替换完毕,return md_content
+     7. 对新的md_content的进行内容备份(md_content,md_path_obj) -> new_md_path地址
+        new_md_path_obj:Path backup_new_md_content(md_content,md_path_obj)
+        7.1 获取新的md_path的目标地址 new_md_path_obj:Path = md_path_obj.with_name(f"{md_path_obj.stem}_new.md")
+        7.2 将内容写到新的地址 new_md_path_obj
+        7.3 返回新的地址 return
+     8. 更新state 并且返回即可
+        8.1 更新state md_content / md_path
+        8.2 返回state
+
+
+
+2. 节点: 文档切割处理:node_document_split
+

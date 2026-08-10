@@ -14,3 +14,6 @@ MINERU_DOWNLOAD_TIMEOUT_SECONDS = 300
 
 # 定义常量 输出文件地址 output
 PARSE_PDF_OUTPUT_DIR = "output"
+
+
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
