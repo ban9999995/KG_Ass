@@ -9,7 +9,7 @@ from minio.deleteobjects import DeleteObject
 
 from app.process.import_.agent.state import ImportGraphState
 from app.rag.import_.config import SUPPORTED_IMAGE_EXTENSIONS, SUB_MD_CONTENT_CONTEXT_LENGTH
-from app.shared.runtime.logger import logger
+from app.shared.runtime.logger import logger, step_log
 from app.infra.model.model_providers import model_provider
 from app.infra.config.providers import infra_config
 from app.shared.runtime.load_prompt import load_prompt
@@ -21,6 +21,7 @@ from app.infra.minio.ObjectStore import minio_gateway
 
 
 # 1. 获取参数并且校验(state) -> md_content:str  md_path_obj:Path  images_path_obj:Path
+@step_log("validate_data_and_paths")
 def validate_data_and_paths(state:ImportGraphState) -> tuple[str,Path,Path]:
     # 1.1 获取请求参数 md_path
     md_path:str = state.get("md_path")
@@ -44,6 +45,7 @@ def validate_data_and_paths(state:ImportGraphState) -> tuple[str,Path,Path]:
 
 
 #3. 查找images_path_obj每张图片对应的上下文信息(images_path_obj,md_content) -> [(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4]
+@step_log("extract_image_context_info")
 def extract_image_context_info(images_dir_obj:Path,md_content:str) -> list[tuple[str,Path,tuple[str,str]]]:
     image_context_list:list[tuple[str,Path,tuple[str,str]]] = []
     # 3.1 遍历循环images_path_obj每个文件 for Path in images_path_obj.iterdir() glob rglob
@@ -90,6 +92,7 @@ def extract_image_context_info(images_dir_obj:Path,md_content:str) -> list[tuple
 
 
 # 4. 调用视觉模型进行图片内容识别([(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4] , 文件名 md_path_obj.stem) -> {图片名:语义 ....}
+@step_log("call_vision_summary_images")
 def call_vision_summary_images(images_context_list:list[tuple[str,Path,tuple[str,str]]],file_name:str) -> dict[str,str]:
     # 字典
     images_summaries:dict[str,str] = {}
@@ -122,6 +125,7 @@ def call_vision_summary_images(images_context_list:list[tuple[str,Path,tuple[str
     return images_summaries
 
 # 5. 调用minio将图片传递到文件服务器([(图片名.name,图片的完整地址:str/Path,(上文,上文)),2,3,4]) -> {图片名:http...}
+@step_log("upload_to_minio_return_url")
 def upload_to_minio_return_url(images_context_list:list[tuple[str,Path,tuple[str,str]]], file_name:str) -> dict[str,str]:
     images_url:dict[str,str] = {}
     # 5.1 获取minio的客户端对象 infra.函数 -> @property
@@ -175,6 +179,7 @@ def upload_to_minio_return_url(images_context_list:list[tuple[str,Path,tuple[str
 
 
 # 6. 使用正则进行md_content内容的替换(md_content,{图片名:语义 ....},{图片名:http...}) -> 新的 md_content
+@step_log("replace_old_md_content")
 def replace_old_md_content(md_content:str,images_summaries:dict[str,str],images_url:dict[str,str]) -> str:
     # 6.1 循环 图片名,网络地址  {图片名:网络地址}.items()
     for image_name,image_summary in  images_summaries.items():
@@ -185,10 +190,20 @@ def replace_old_md_content(md_content:str,images_summaries:dict[str,str],images_
         image_re = re.compile(r"\!\[.*?\]\(.*?"+re.escape(image_name)+r".*?\)")
         # 6.4 进行正则对象  md_content =   编译后的正则对象 ![](./xxxxx.jpg) .sub( 要替换入的新的内容 "![语义](网络地址)" , 在哪个内容上替换 md_content )
         # f"![{image_summary}]({image_url})"  /
-        md_content =  image_re.sub(f"![{image_summary}]({image_url})",md_content)
+        """
+            参数1: 本意不是正则表达式,就是要替换入的字符串 所以出现特殊字符(元字符)  ![语义](http..)
+                  替换有个特殊符号 \ 数字 -> 分组替换  xx\2xx.png
+                  方式1: 传入字符串  xx\2xx.png -> 报错
+                  方式2: 匿名函数 lambda  lambda _ : ![{image_summary}]({image_url}) -> 直接调用函数,将返回值不会做任何处理! \1 
+            替换后的字符串 md_content [34]= sub(参数1:要替换入的字符串,参数2:在哪个字符串中进行查找和替换 md_content[234]) -> 内容替换
+        
+        """
+        md_content =  image_re.sub(lambda _ : f"![{image_summary}]({image_url})",md_content)
     # 6.5 循环结束,替换完毕,return md_content
     return md_content
+
 # 7. 对新的md_content的进行内容备份(md_content,md_path_obj) -> new_md_path地址
+@step_log("backup_new_md_content")
 def backup_new_md_content(new_md_content:str,md_path_obj:Path) -> Path:
     # 7.1 获取新的md_path的目标地址 new_md_path_obj:Path = md_path_obj.with_name(f"{md_path_obj.stem}_new.md")
     new_md_path_obj:Path = md_path_obj.with_name(f"{md_path_obj.stem}_new.md")
@@ -197,6 +212,7 @@ def backup_new_md_content(new_md_content:str,md_path_obj:Path) -> Path:
     # 7.3 返回新的地址 return
     return new_md_path_obj
 
+@step_log("enrich_markdown_images")
 def enrich_markdown_images(state: ImportGraphState) -> ImportGraphState:
     # 1. 获取参数并且校验(state) -> md_content:str  md_path_obj:Path  images_path_obj:Path
     md_content,md_path_obj,images_dir_obj = validate_data_and_paths(state)
