@@ -62,7 +62,8 @@ def split_document_by_title(md_content:str,file_title:str)->list[dict[str,Any]]:
             logger.debug(f"当前是{current_title}的空行,跳出处理!!!")
             continue
         # 2.6 判断是否进入和跳出代码块 line.start_with("```" "~~~"):  is_code = not is_code
-        if current_line_strip.startswith("```") or current_line_strip.strip("~~~"):
+        # todo current_line_strip此处startswith写成了strip()
+        if current_line_strip.startswith("```") or current_line_strip.startswith("~~~"):
             # ```python
             # ```
             is_code = not is_code
