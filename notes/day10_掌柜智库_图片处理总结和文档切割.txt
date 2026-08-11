@@ -255,7 +255,27 @@
             # 标题
             内容
             内容
-       3. 长切短合的函数处理
+
+            chunks = [chunk {file_title,title 标题1\n标题2,content title\n}]
+       3. 长切短合的函数处理 (精处理)
+           refine_split_or_merge_chunks(chunks) -> chunks [  { parent_title part -> 超长二次切割!! title file_title content 400 - 600 -  1000} ]
+           # 标题
+            内容                                                                chunk  parent_title = 原来的title   part =1  title=title_part  content=parent_title\n内容
+            内容      -> chunks title = # 标题  content = # 标题 内容 内容 内容     chunk parent_title = 原来的title    part =2 title=title_part   content=parent_title\n内容
+            内容                                                                chunk  parent_title = 原来的title   part =3 title=title_part  content=parent_title\n内容
+           3.1 循环判断每个chunk的长度 大于 -> 600 -> 触发切割逻辑 _too_long_split(chunk:dict[str,Any]) -> list[dict[str,Any]]
+                                    小于 -> 600 -> 当前标题的内容就是小于600 所谓了!  [语义优先]
+                   chunks -> {>600} -> []  {<600}    -> 多几个chunk
+           3.2 检查是否小于400  小于 -> 400   同一个语义 parent_title   合并后小于1000 -> 合并 -> 少几个chunk
+           3.3 chunk - 没被切 也没有合并  parent_title =title part = 1 -> 默认补全
        4. 数据备份处理chunk.json
        4. 更新state并返回结果
-   递归切割器回顾
+
+
+600 内容的总长度   pre 标题很长 连续标题 30 40 50  + 内容
+
+今日内容:
+   1. 替换 sub(lambda _ : [] , md_content) -> 图片处理搞定
+   2. 总结: minio / re  /  base64  / image input
+   3. 前两步: 1. 参数获取和校验 2. 根据标题进行初切(语义) 思路: 每行处理 / 标题 还是 普通行 / 碰见标题进行结算,记录本次 [代码块,连续标题,孤儿数据]
+   4. 精细切割: 1. 递归切割器 [不会大于chunk_size] 2. 过长进行递归切割 2. 过短进行合并 (双指针)
