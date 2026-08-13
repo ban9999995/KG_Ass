@@ -41,3 +41,6 @@ if __name__ == '__main__':
         final_state = node_document_split(result_state)
         final_chunks = final_state.get("chunks", [])
         logger.info(f"测试成功：最终生成{len(final_chunks)}个有效Chunk")
+        for index, chunk in enumerate(final_chunks,start=1):
+            logger.info(f"第{index}块,parent_title:{chunk.get('parent_title')},"
+                        f"title:{chunk.get('title')},part:{chunk.get('part')},内容长度:{len(chunk.get('content'))}")

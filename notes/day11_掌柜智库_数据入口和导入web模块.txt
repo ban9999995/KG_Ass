@@ -1,0 +1,14 @@
+1. 节点: node_document_split总结
+
+    node_document_split  -> 目标 -> 切割的四个核心原则:
+       原则1: 语义优先 - md -> 标题 || ppt -> 页 [文档类型找到自己的语义!!]
+       原则2: 长度可控 太长->准确率  太短->召回率   '正好' -> 测 试   400 - 600 - 1000
+       原则3: 边界清晰 任何动作 切 | 合并 | 重叠 都不能跨域语义
+       原则4: 可追溯性 切割的内容 -> 附带参数 -> 切块的定位  file_title item_name parent_title title content
+    业务步骤:
+    修改问题:
+       1. 代码块判断 startWiths 66行
+       2. 删除连续标题中 append 87行
+       3. 添加非空和标题判断 132行
+
+2. 节点: node_item_name_recognition

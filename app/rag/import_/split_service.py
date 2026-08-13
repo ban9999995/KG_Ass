@@ -7,10 +7,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.process.import_.agent.state import ImportGraphState
 from app.rag.import_.config import CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_MIN, CHUNK_MAX_SIZE
-from app.shared.runtime.logger import logger
+from app.shared.runtime.logger import logger, step_log
 
 
 #1. 获取参数和校验
+@step_log("validate_data_and_content")
 def validate_data_and_content(state:ImportGraphState) -> tuple[str,str,Path]:
     # 1.1 获取参数 md_content / md_path  / file_title
     md_content:str = state.get("md_content")
@@ -39,6 +40,7 @@ def validate_data_and_content(state:ImportGraphState) -> tuple[str,str,Path]:
 
 
 # 2. 根据语义文档的初次切割 [md-标题]
+@step_log("split_document_by_title")
 def split_document_by_title(md_content:str,file_title:str)->list[dict[str,Any]]:
     # [chunk{title,file_title,content}]
     # 核心: 按行处理 如果第一个标题,记录,标题下的每一行也记录[], 碰到第二个标题, 将第一个标题+行存储到列表!! 开始记录第二个标题...
@@ -81,12 +83,10 @@ def split_document_by_title(md_content:str,file_title:str)->list[dict[str,Any]]:
                 # 上一次内容存储的是标题! 本次进入到了标题! 连续标题
                 # current_lines = [# 标题 , 内容 , 内容 ]
                 current_title = current_title + "\n" + current_line_strip
-                #  [#标题 ,  标题1]
                 title_list:list[str] =  current_title.split("\n")
-                #  [#标题 ,  标题1 , 内容 , 内容]
                 title_list.extend(current_lines[len(title_list)-1:])
                 current_lines = title_list
-                current_lines.append(current_line_strip)
+                # 删除: current_lines.append(current_line_strip)
                 # current_title = #标题\n#标题2\n标题3
                 logger.debug(f"碰见连续标题,进行了标题和当前行的内容累加!!!")
                 continue
@@ -96,10 +96,13 @@ def split_document_by_title(md_content:str,file_title:str)->list[dict[str,Any]]:
                 # current_line_strip -> 标题
                 # 行 行 行 标题 行 行 行 -> content -> 长切割 -> 标题\n行 行 行   == 标题\n行 行 行
                 # 标题在前,内容在后!!
+                # current_title = None
+                # current_lines = [1,2,3]
+                # current_line_strip = #标题1  -> [#标题1 , 1, 2,3]
                 temp_lines:list[str] = [current_line_strip]
                 temp_lines.extend(current_lines)
                 # [#标题 内容 内容]
-                current_lines = temp_lines
+                current_lines = temp_lines # [#标题1 , 1, 2,3]
                 # current_lines.append(current_line_strip)
                 # #标题
                 current_title = current_line_strip
@@ -127,17 +130,19 @@ def split_document_by_title(md_content:str,file_title:str)->list[dict[str,Any]]:
             current_lines.append(current_line_strip)
 
     # 2.9 循环结束 最后结算一次!!!
-    chunks.append(
-        {
-            "file_title": file_title,
-            "title": current_title,
-            "content": "\n".join(current_lines)
-        }
-    )
+    # 情况: 整个文档没有title
+    if current_lines:
+        chunks.append(
+            {
+                "file_title": file_title,
+                "title": current_title or "default",  # 给与一个默认值
+                "content": "\n".join(current_lines)
+            }
+        )
     # 2.10 返回chunks可以了
     return chunks
 
-
+@step_log("_too_long_split")
 def _too_long_split(chunk):
 
     sub_chunks:list[dict[str,Any]] = []
@@ -157,6 +162,8 @@ def _too_long_split(chunk):
         chunk_overlap=CHUNK_OVERLAP  # overlap 要 >= 当前层最小可保留片段长度 。
     )
 
+    # 文档 -> 递归切割 -> 1980个字符的段落 [table] -> <tr/>
+
     # 3.使用递归切割器切割即可
     for  part, sub_content in enumerate(splitter.split_text(clean_content),start=1):
         sub_chunks.append(
@@ -171,7 +178,7 @@ def _too_long_split(chunk):
     logger.info(f"{title}标题对应切换,切成:{len(sub_chunks)}块!")
     return sub_chunks
 
-
+@step_log("_too_short_merge")
 def _too_short_merge(refine_chunks):
     """
       实现依据: 1. 前指针 长度小于400  2. 前后是同一个parent_title 且不能为空   3. 合并后长度小于1000
@@ -229,6 +236,7 @@ def _too_short_merge(refine_chunks):
     logger.info(f"进行短合并处理,处理完毕的数据长度:{len(final_chunks)}")
     return final_chunks
 
+@step_log("refine_split_or_merge_chunks")
 def refine_split_or_merge_chunks(chunks:list[dict[str,Any]]) -> list[dict[str,Any]]:
     # [  { parent_title part -> 超长二次切割!! title file_title content 400 - 600 -  1000} ]
     logger.info(f"进行精细切割或者合并的原数据长度:{len(chunks)}")
@@ -256,6 +264,7 @@ def refine_split_or_merge_chunks(chunks:list[dict[str,Any]]) -> list[dict[str,An
 
 
 #  4. 数据备份处理chunk.json
+@step_log("backup_chunks")
 def backup_chunks(chunks:list[dict[str,Any]],md_path_obj:Path):
     # 1. 获取目标地址 md同级 chunk.json
     chunk_json_obj:Path = md_path_obj.parent / "chunk.json"
@@ -263,7 +272,7 @@ def backup_chunks(chunks:list[dict[str,Any]],md_path_obj:Path):
     chunk_json_obj.write_text(data=json.dumps(chunks,indent=4,ensure_ascii=False),encoding="utf-8")
     logger.info(f"已经将chunks备份到:{str(chunk_json_obj)}")
 
-
+@step_log("split_document")
 def split_document(state: ImportGraphState) -> ImportGraphState:
     md_content,file_title,md_path_obj = validate_data_and_content(state)
     chunks:list[dict[str,Any]] = split_document_by_title(md_content,file_title)

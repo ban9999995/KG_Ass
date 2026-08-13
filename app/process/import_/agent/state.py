@@ -22,7 +22,7 @@ class ImportGraphState(TypedDict):
     is_md_read_enabled:bool     # 是md文件
     is_pdf_read_enabled:bool    # 是pdf文件
 
-    chunk:list[dict]            # 切块的内容(没有向量)
+    chunks:list[dict]            # 切块的内容(没有向量)
 
     item_name:str               # 每个文档提取的唯一标识! 多个文档可能相同(烫金机维修/销售/售后手册)
 
