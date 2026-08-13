@@ -74,6 +74,9 @@ def generate_embeddings(texts: list[str]) -> dict[str, list]:
         # 加载BGE-M3模型单例
         model = get_bge_m3_ef()
         # 模型编码生成向量，返回dense（稠密向量）+sparse（CSR格式稀疏向量）
+        # embeddings = 稠密 -> [[1024],[1024],[1024]]
+        #              稀疏 250009 大部分都是0  [[25万],[25万],[25万]] -> BGEM3FlagModel -> [{index:x,index:x} -> 一个,{},{}]
+        #              milvus -> 250009 -> c [compress]s [sparse]r [row] 压缩稀疏矩阵 -> 本次解析的所有的稀疏量  更高效的存储多组稀疏数据
         embeddings = model.encode_documents(texts)
         logger.debug(f"模型编码完成，开始解析稀疏向量格式，共{len(texts)}条")
 
@@ -93,6 +96,7 @@ def generate_embeddings(texts: list[str]) -> dict[str, list]:
         for i in range(len(texts)):
             # 提取第i个文本的稀疏向量索引：np.int64 → Python int（满足字典key可哈希要求）
             sparse_indices = embeddings["sparse"].indices[
+                #  1 0 : 2 3
                 embeddings["sparse"].indptr[i]:embeddings["sparse"].indptr[i + 1]
             ].tolist()
             # 提取第i个文本的稀疏向量权重：np.float32 → Python float（适配JSON序列化/接口返回）
@@ -105,11 +109,14 @@ def generate_embeddings(texts: list[str]) -> dict[str, list]:
 
         # 构造最终返回结果，稠密向量转列表（解决numpy数组不可序列化问题）
         result = {
-            # embeddings["dense"] = [[1稠密向量],[2稠密向量],[...]  -> 1024]
-            # embeddings["sparse"] = [[1稀疏向量],[2稠密向量],[...]  -> 1024]
+            # [[1024],[1024] -> texts]
             "dense": [emb.tolist() for emb in embeddings["dense"]],  # 嵌套列表，与输入文本一一对应
-            "sparse": processed_sparse  # 字典列表，模型已做L2归一化
+            # [csr -> {},{} -> texts]
+            "sparse": processed_sparse  # 字典列表，模型已做L2归一化  # [{},{},{}]
         }
+
+        # {"dense":[[1024],[]]  ,  "sparse":[{},{}]}
+
         logger.success(f"{len(texts)}条文本向量生成完成，格式已适配工业级使用")
         return result
 

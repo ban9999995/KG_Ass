@@ -1,14 +1,219 @@
 1. 节点: node_document_split总结
-
     node_document_split  -> 目标 -> 切割的四个核心原则:
        原则1: 语义优先 - md -> 标题 || ppt -> 页 [文档类型找到自己的语义!!]
        原则2: 长度可控 太长->准确率  太短->召回率   '正好' -> 测 试   400 - 600 - 1000
        原则3: 边界清晰 任何动作 切 | 合并 | 重叠 都不能跨域语义
        原则4: 可追溯性 切割的内容 -> 附带参数 -> 切块的定位  file_title item_name parent_title title content
     业务步骤:
+       根据标题切割 [代码块/连续标题/孤儿数据]
+       同标题长切短合并
+       数据备份处理
     修改问题:
        1. 代码块判断 startWiths 66行
        2. 删除连续标题中 append 87行
        3. 添加非空和标题判断 132行
-
 2. 节点: node_item_name_recognition
+   节点意义:
+       问题 -> 锁定文档 -> 文档相关的切块进行搜索 -> 准确
+
+             烫金机是否好用? <- 他是否好用?
+             华为手机如何重启?                  ->  锁定范围的标识: item_name 主体 , tag标签 (类型 维修/销售/使用)
+             拯救者电脑c口不好用怎么办?
+
+           用户提问 ->  问题 -> 标识 1.问题提取 2.文档提取 3.最大限度的缩小范围 <- 模型 <-文档
+
+       扩展1:  一个文档对应一个主体, 一个主体可以对应多个文档 [烫金机的使用手册,烫金机的维修手册,烫金机的销售手册...]
+       扩展2: 标识存在的意义是为了缩小搜索范围,标识可以是多个! 1.问题可以提取 2.文档可以提取
+       扩展3: 识别流程  1. 文档->模型->提取->item_name->向量库 / 稠密和稀疏  [item_name会比较标准,文档提取 HAK 180 烫金机]
+                      2. 用户->问题->模型->提取->item_name [不标准 烫金机] -> 向量库相似度搜索 -> 置信度匹配 -> 确定item_name [向量库] [HAK 180 烫金机]
+       根据文档识别item_name,直接将item_name存储到对应向量库中!!!! [文档级别 一个文档一条数据 item_name,sparse/dense,切块级别 一个chunk对应一条 content...]
+                         文档级别 {pk,file_title,item_name,sparse_vector,dense_vector}
+   节点参数:
+       使用: chunks[整个文档的内容]  file_title [兜底]
+       生成: item_name  chunks {file_title,parent_title,title,part,content,  item_name }
+   节点准备:
+       嵌入式模型:
+         选择模型:  bge-m3模型
+             支持的语言  100多种语言
+             支持稠密和稀疏两种向量的生成 稠密和稀疏
+             确认生成稠密向量的维度  1024
+             上下窗口大小[序列长度]  8192   [chunk content 批量生成向量]
+         使用模型的方式:
+             1. 在线接口  bailian平台 [token]
+             2. 本地下载权重文件 + python客户端  本地运行解析
+         下载模型:
+             方式1: https://www.modelscope.cn/models/BAAI/bge-m3 -> 下载即可
+             方式2: 魔搭 -> 提供一个下载的工具包 ->  app/shared/tool/download_bgem3.py 下载,修改对应的下载位置
+         加载模型:
+             在python代码中使用嵌入式模型的权重文件
+             方式1: 官方提供的python客户端
+                  uv add -U FlagEmbedding
+                  from FlagEmbedding import BGEM3FlagModel
+                  model = BGEM3FlagModel('下载后本地文件的地址',
+                                           use_fp16=True)  -> 默认fp32 -> 降低精度16 -> GPU
+                  model.encode(["","",""])
+             方式2: 第三方提供的加载方式 [milvus]
+                  pip install --upgrade pymilvus
+                  pip install "pymilvus[model]"
+
+                  from pymilvus.model.hybrid import BGEM3EmbeddingFunction
+
+                  bge_m3_ef = BGEM3EmbeddingFunction(
+                     model_name='本地地址', # Specify the model name
+                     device='设备名称 cpu / cuda:0', # Specify the device to use, e.g., 'cpu' or 'cuda:0'
+                     use_fp16=False # Specify whether to use fp16. Set to `False` if `device` is `cpu`.
+                  )
+
+                  使用gpu:
+                    device='cuda:0'
+                    use_fp16=True
+                    依赖需要更改版本: item_name教案中 2.1.3 有gpu版本依赖处理
+         工具类读取:
+            查看下配置文件: .env  [嵌入式模型的配置文件]
+               # embedding模型！ 进行向量生成！！ 魔搭下载模型到本地！！
+                BGE_M3_PATH=D:\ai_models\modelscope_cache\models\BAAI\bge-m3   <- 自己的tool下载的位置
+                BGE_M3=BAAI/bge-m3          <- 嵌入式模型名称
+                # gpu
+                # BGE_DEVICE=cuda:0
+                # cpu
+                BGE_DEVICE=cpu      <- 设备标识
+                # cpu 需要关闭 0  GPU 上生成向量通常默认开启了半精度浮点数（FP16）加速，而 CPU 上通常使用单精度（FP32）
+                BGE_FP16=0          <-  0 不开启   1开启
+            解读模型加载和生成向量的工具类: C:\Users\admin\PycharmProjects\ai_0511_knowledge_base\app\shared\model\embedding_utils.py
+                get_bge_m3_ef 加载嵌入式模型 归一化配置
+                generate_embeddings([text,text]) 进行向量化生成 -> {dense:[[],[]],sparse:[{},{}] -> csr }
+         infra添加: app/infra/model/model_providers.py
+            class ModelProvider:
+                # 1. 获取大语言模型
+                def llm_model(self,model_name:str|None=None,json_mode:bool=False):
+                    return get_llm_client(model=model_name,json_mode=json_mode)
+                # 2. 获取视觉模型
+                def vision_model(self,model_name:str):
+                    return get_llm_client(model=model_name)
+                # 3. 嵌入式模型生成向量的函数
+                def generate_embeddings(self,texts: list[str]) -> dict:
+                    return generate_embeddings(texts
+       向量数据库:
+          安装milvus
+             wget https://github.com/milvus-io/milvus/releases/download/v2.4.11/milvus-standalone-docker-compose.yml -O docker-compose.yml
+             docker compose up -d
+             docker compose down
+          加载milvus的客户端工具
+             检查.env配置
+                MILVUS_URL=http://39.105.7.90:19530  <- 改成自己的
+                # 存储切片集合
+                CHUNKS_COLLECTION=kb_chunks    <- chunk集合名字 _xxx
+                # 存储每个文档对应的实体类
+                ITEM_NAME_COLLECTION=kb_item_names  <- item_name集合名字 _xxx
+                EMBEDDING_DIM=1024                <- 稠密维度  嵌入式模型
+             解读加载客户端: app/shared/clients/milvus_utils.py
+                get_milvus_client() 获取milvus客户端
+          配置到infra模块
+             milvus的公共模块: 客户端 集合的名字
+                3函数 -> 返回属性
+                1函数 -> 客户端
+             class MilvusGateway:
+                # 3个返回属性的函数
+                @property
+                def chunk_collection_name(self):
+                    return infra_config.milvus_config.chunks_collection
+
+                @property
+                def item_name_collection_name(self):
+                    return infra_config.milvus_config.item_name_collection
+
+                # @property
+                # def dense_dim(self):
+                #     return infra_config.milvus_config.
+
+                # 1个返回客户端的函数
+                @property
+                def milvus_client(self):
+                    return get_milvus_client()
+   节点流程:
+     1. 获取并校验参数 (chunks/file_title)
+        get_data_and_validate(state) -> tuple[list,str]
+     2. 调用模型识别item_name
+        call_model_recognition_item_name(chunks,file_title) -> str [item_name]
+        2.1 加载大语言模型客户端
+        2.2 拼接context内容,通过chunks拼接 -> top5
+        2.3 加载提示词文件,并且动态替换关键字(file_title/context)
+        2.4 准备HumanMessage | Chains
+        2.5 调用模型进行item_name识别.并获取返回结果
+        2.6 返回即可
+     3. 更新chunks的内容 [{没有 item_name <- item_name }]
+     4. 更新state chunks | item_name
+     5. 提前准备item_name对应的集合
+        prepare_item_name_milvus_collection()
+        item_name -> milvus创建好即可 [不存在创建]
+     6. 保存item_name信息到对应的集合中
+        insert_into_milvus_collection(item_name,file_title)
+        {pk,file_title,item_name,稀疏,稠密向量}
+        file_title作为条件 先删除 -> 保存   [文档] -> 不同的模型|不同时期的模型 -> item_name
+     7. 返回state return state
+   内容总结:
+
+3. 节点: node_bge_embedding
+4. 节点: node_import_milvus
+5. 整体流程测试
+
+今日内容:
+   1. 测试 -> node_document_split  问题1:  startWith  问题2: 连续主体注释append  问题3: 跳出循环后 title默认值问题
+   2. 嵌入式模型 bge-m3 模型的加载
+      选择模型的原因: 1. 语言支持 2. 上下文窗口 8192  3. 稀疏和稠密  4. 稠密向量维度 [1024]
+      下载模型  tool / 魔搭
+      加载模型  BAAI提供 /  Milvus [底层BAAI/稀疏向量->C [Compressed] S [Sparse] R [Row]]
+      檢查配置文件  .env  模型的位置/模型设备cpu/模型的精度
+      解读嵌入式模型工具类  model/embedding_utils  加载模型(归一化) 生成向量(csr->list[dict])
+      修改原有模型infra   infra/model_provider/添加一个create_embedding(self,[texts])
+   3. 准备milvus向量库
+      安装 / 启动   如果虚拟机装过minio,修改配置文件 9000 -> x:9000  9001 -> x:9001
+         docker compose down  / up -d
+      解读配置文件 .env
+         链接服务器地址
+         两个集合名字 _你的名字
+         dim  维度 没用
+      milvus的客户端工具类
+         shared/clients/Milvus_clients -> 获取milvus客户端
+      定义milvus对应Infra
+         infra/milvus/VectorStore/MilvusGateway   2个属性 1客户端  @property
+   4. item_name_recognition
+      校验参数 chunks file_title
+      调用模型item_name识别
+      更新chunks <- item_name / state <- item_name chunks
+      准备item_name对应的数据集合 pk file_title item_name dense_vector  sparse_vector
+
+          创建schema
+            schema =  milvus_client.create_schema(
+                auto_id = True,
+                enable_dynamic_field = True
+             )
+
+            schema.add_filed(filed_name=,datatype=DataType.,is_primary=True,max_length=xx,dim=1024)
+          创建indexs
+           indexs =  milvus_client.prepare_index_params
+           indexs.add_index(
+                filed_name = 列名,
+                index_name = 索引名称,
+                index_type = "索引类型",  AUTOINDEX / FLAT / IVF_FLAT  / HNSW  ||| SPARSE_INVERTED_INDEX
+                metric_type= "向量相似度计算"   稠密: COSINE -> -1 1 IP L2 / 稀疏: IP 无穷 BM25
+                param      = {}
+          创建collection
+            milvus_client.create_collection(
+               collection_name = ,
+               schema =
+               index =
+          加载collection
+            milvus_client.load_collection(collection_name=xx)
+      删除并插入数据
+         item_name生成向量
+         删除数据 delete(collection_name,filter=f"file_title == '{}'")
+         插入数据 insert(collection_name,data=[dict|list[dict]] -> dict
+
+  5. node_bge_embedding节点  chunks -> {file_title,item_name,parent_title,title,part,content -> dense_vector,sparse_vector}
+        细节1:    item_name + content -> dense_vector,sparse_vector
+        细节2:    bge-m3 -> 8192 token -> 批量生成 -> 约定5个一批   range(0,size,5)
+        chunks = {file_title,item_name,parent_title,title,part,content,dense_vector,sparse_vector} = embedding_contents
+  6. node_import_milvus
+        embedding_contents -> milvus
+
