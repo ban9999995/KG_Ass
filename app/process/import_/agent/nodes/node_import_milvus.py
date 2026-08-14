@@ -1,5 +1,5 @@
 from app.shared.runtime.logger import node_log
-from app.shared.utils.task_utils import add_done_task, add_running_task
+from app.shared.utils.task_utils import add_done_task, add_running_task, update_task_status,TASK_STATUS_COMPLETED
 from app.process.import_.agent.state import ImportGraphState
 from app.rag.import_.index_service import index_chunks
 
@@ -12,6 +12,7 @@ def node_import_milvus(state: ImportGraphState) -> ImportGraphState:
     add_running_task(state["task_id"], "node_import_milvus")
     state = index_chunks(state)
     add_done_task(state["task_id"], "node_import_milvus")
+    # update_task_status(state['task_id'], TASK_STATUS_COMPLETED)
     return state
 
 

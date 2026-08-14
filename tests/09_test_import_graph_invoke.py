@@ -27,6 +27,13 @@ state:ImportGraphState = create_default_state(
 )
 logger.info(f"开始流程测试,测试数据:{json.dumps(state,indent=4,ensure_ascii=False)}")
 # 2.执行图对象
-result:ImportGraphState = import_graph_app.invoke(state)
+try:
+    # 开启
+    result: ImportGraphState = import_graph_app.invoke(state)
+    # 完成
+except Exception as e:
+    # 失败
+    print(e)
+
 # 3.输出最终结果
 logger.info(f"测试流程结束,结果数据:{json.dumps(result,indent=4,ensure_ascii=False)}")
