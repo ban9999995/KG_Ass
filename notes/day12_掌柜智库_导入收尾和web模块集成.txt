@@ -22,4 +22,43 @@
        4. 主键回显思路
        5. 更新state,并返回
 3. 整体流程测试
+   回顾:
 
+     node_entry   ----  ----------- node_md_img - node_document_split - node_item_name_recognition - node_bge_embedding - node_import_milvus
+               \                  /
+                  node_pdf_to_md
+
+     node_entry: 判断文件类型,修改state,为后续的条件边做准备!!
+                 local_file_path  原始输入的文件地址
+                 md_path is_md_read_enabled
+                 pdf_path is_pdf_read_enabled
+                 file_title
+                 技术点: Path  . stem  Path(地址)
+     node_pdf_to_md: 将pdf转成md并且下载到本地
+                 pdf_path local_dir md_path
+                 技术点: minerU / requests / Path is_file is_dir  mkdir  Path(Path(地址))  read_bytes|test write_bytes | text  /  rglob  glob iterdir with_name rename / shutil rmtree  unpack_archive(压缩文件,目标文件夹)  make_archive...
+     node_md_img: 处理图片 -> ![](./xx)  ![含义](http)  -> 图文混合检索
+                 md_path md_content md_path
+                 技术点: minio list_objects remove_objects fput_object 拼接...
+                        视觉模型   extra_body=extra_body,  # 非openai标准的key ChatOpenAI没有地址! -> 模型官方的参数介绍 model_kwargs=model_kwargs, # openapi标准的key
+                                 [{text},{image_url}]
+                        base64   base64.b64encode(字节).decode(utf-8)  base64.b64decode(字符)
+                        mimetype  guess_type(x)[0]
+                        re      compile  search match findall finditer sub
+     node_document_split: 文档的切割 -> chunk -> 大小合适 小了 -> 召回率低 大了 -> 准确率低
+                 md_content file_title  chunks
+                 技术点: 原则1: 语义优先 原则2: 大小合适 (测试/嵌入式模型/重排序模型窗口大小)
+                        原则3: 边界清晰 同一个语义下方可合并或者切割以及存在overlap   原则4: 可追溯性 content -> 定位属性
+                        递归切割器
+     node_item_name_recognition: item_name主体识别
+                 chunks file_title  item_name chunks
+                 技术点: milvus 使用 / 大语言模型的使用
+     node_bge_embedding
+                 chunks embeddings_content
+                 技术点: 嵌入式模型 
+     node_import_milvus:
+                 embeddings_content
+                 技术点: milvus 使用
+4. fastapi回顾
+5. 导入web接口实现
+6. 查询的图结构准备(state/graph)
