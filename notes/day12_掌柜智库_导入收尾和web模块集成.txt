@@ -1,0 +1,25 @@
+
+1. 节点: node_bge_embedding
+   作用: 将chunk中的content批量生成向量
+        注意,item_name + content 生成? 问题[主体 它 + 问题]  == content [主体 + 问题] -> 向量
+        注意,批量生成  bge-m3 8192 - content 不超过1000
+   参数:
+        chunks
+        embedding_contents [向量]
+   步骤:
+       1. 获取参数并且校验
+       2. 批量生成向量
+       3. 更新state并返回..
+2. 节点: node_import_milvus
+   作用: 将embedding_contents存储到对应的向量数据库中
+   参数:
+        embedding_contents
+        embedding_contents 主键回显
+   步骤:
+       1. 获取参数并校验
+       2. 准备chunk的对应向量库(没有-创建)
+       3. 删除并插入数据 [二次插入/文档可能更新/file_title]
+       4. 主键回显思路
+       5. 更新state,并返回
+3. 整体流程测试
+
