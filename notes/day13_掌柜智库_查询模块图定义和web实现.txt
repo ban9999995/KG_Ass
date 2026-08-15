@@ -1,0 +1,29 @@
+
+1. 定义查询模块图结构(state/node/业务/图/测试)
+
+   1.1 定义查询的state [解读 + 粘贴]   process / query / agent / state.py
+   1.2 导入查询节点和业务函数(7对)
+       @node_log("节点名") => 节点业务输出(info)
+       def 节点名(state) -> state
+          1. 节点运行状态  add_running_task(session_id 类似task_id, sys._getframe().f_code.co_name, is_stream = True -> 给前端推送数据..)
+          2. 调用业务逻辑 rag/service/函数
+          3. 节点完成状态  add_done_task(session_id 类似task_id, sys._getframe().f_code.co_name, is_stream = True -> 给前端推送数据..)
+          return state
+   1.3 定义导入图的业务(图) [需要手动写]
+
+              -------------------answer[可选|无法确定]----------------
+              |                                                     |
+              |             问题查询                                  |
+       意图识别和问题重写 ->   假设查询  -> 粗排rrf -> 精排reranker -> 答案输出 -> sse -> 前端
+                            网络搜索
+
+       langgraph节点中,推荐返回增量更新数据 return {key:value}  -> langgraph汇总!
+          导入流程 -> node -> state -> 我们不怕 -> 纯串行
+          查询流程 -> node -> state -> 三路并发 -> langgraph state session_id  -> 不知道如何更新! [git合并冲突,langgraph state 并发节点返回相同的key]
+       注意: 并发节点改成返回对应的增量数据 return {}
+
+2. 准备查询模块的web接口 [基础]
+
+3. 使用非结构化数据库mongodb
+
+4. 实现查询web模块的历史聊天记录
