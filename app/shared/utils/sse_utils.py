@@ -81,6 +81,9 @@ async def sse_generator(session_id: str, request: Request):
             try:
                 # 使用 run_in_executor 避免阻塞 async 事件循环
                 # {event:"process" : data: {任务状态 / 已完成节点 / 进行中节点}}
+                #  queue.Queue 同步  get() 不阻塞  get(block=True,timeout=x)
+                #  asyncio.Queue 异步  await queue.get()
+                # msg {event:事件,data:数据}
                 msg = await loop.run_in_executor(None, stream_queue.get, True, 1.0)
             except queue.Empty:
                 # print(f"[SSE] Queue empty for {session_id}, waiting...")

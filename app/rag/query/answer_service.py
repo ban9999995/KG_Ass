@@ -28,9 +28,10 @@ def generate_answer(state: QueryGraphState) -> QueryGraphState:
         for ch in base_answer:
             final_text += ch
             push_to_session(session_id, SSEEvent.DELTA, {"delta": ch})
-            time.sleep(0.03)
+            time.sleep(0.2)
 
-        image_urls = ["https://example.com/demo-1.png", "https://example.com/demo-2.png"]
+        image_urls = ["http://39.105.7.90:9000/knowledge-base-files/upload-images/hak180使用说明书/03afecdcf24c25603d447545a08012a468f4d7dd7a2700484ff50c91398492a7.jpg",
+                      "http://www.baidu.com/img/bd_logo.png"]
         push_to_session(
             session_id,
             SSEEvent.FINAL,

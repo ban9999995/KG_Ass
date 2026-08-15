@@ -23,7 +23,184 @@
        注意: 并发节点改成返回对应的增量数据 return {}
 
 2. 准备查询模块的web接口 [基础]
+    2.1 sse技术说明和使用
+        前端  <-------------  后端    方案1: 前端轮询 1 2s  方案2: 后端主动推送  [websocket / sse ]
 
-3. 使用非结构化数据库mongodb
+        sse是一种轻量级(http)客户端和服务端的长连接! 服务端可以通过长连接向客户端推送不同事件类型的数据! 客户端可以区分事件类型做出不同的响应(页面展示)!
 
+        主要的场景: 服务端-> 客户端推送数据
+            图的执行流程 [节点-节点-节点-节点]
+            LLM流式输出 [大语言模型.stream() => content => content ]
+            日志和流程  [任务开始,结束,终止!!]
+
+        sse核心概念: 事件 区分不同的内容,一个sse的长连接下,可以传递不同的数据,前端根据事件区分 +  数据 我们要传递的内容
+        数据格式:
+                 event:[空格]自定义的事件类型\n
+                 data:[空格]数据字符串 建议写成json字符串\n\n
+        到底啥是sse技术:   [  前端 JavaScript EventSource   <-- 后端 StreamingResponse  ]
+
+        场景1: 基础数据类型传递(没有event)
+           不考虑数据类型,单纯返回一种数据格式给前端
+           生成器函数()
+              yield "data:[空格]数据\n\n"
+           后端: return StreamingResponse(生成器函数(),media_type="text/event-stream")
+           前端:
+                const 变量 = new EventSource("后端的地址")
+                变量.onmessage = function(event){
+                     data = event.data
+                     # 前端js页面改变了
+                }
+        场景2: 不同事件类型传递(有event)
+            生成器函数()
+              yield "event: 事件类型\n"
+              yield "data:[空格]数据\n\n"
+           后端: return StreamingResponse(生成器函数(),media_type="text/event-stream")
+           前端:
+                const 变量 = new EventSource("后端的地址")
+                变量.addEventListener("事件类型",(event) =>{
+                   事件对应的前端显示效果!
+                   event.data => 后端返回的数据
+                })
+           扩展: sse用完要关闭 / es.close()
+        场景3: 模拟当前项目数据传递(双接口+队列存储) [任何项目]
+           解释: 项目中如何进行流式数据返回!
+           理解1: 一个负责触发查询,将数据存储到容器中! 另一个(流式)负责从容器中获取数据! yield
+           理解2: 容器 -> asyncio.Queue 为啥要使用异步容器?
+
+                 负责触发查询接口() -> 执行查询的langraph -> 7个节点
+                   触发 7个节点
+                       |
+                       |
+                      容器  同步 / 异步
+                       |
+                       |
+                 async 流式接口 -> 所有协程 所属的线程!
+                   //生成器函数
+                   def 生成器函数():
+                       while Ture:
+                          同步容器: 1.get() 不阻塞 -> 直接返回结果  2. get(block=True,timeout=3) == 线程界别 [sse_util 同步]
+                          异步容器: asyncio.Queue()   async get()  awat get() 阻塞 协程  =  put()
+                          yield 容器.get()
+                   return StreamingResponse( 生成器函数(), )
+
+                 uvicorn的线程工作原理
+                    一个线程 -> Event Loop  -> 所有的协程  <- 我们
+                    线程池  -> 非协程函数
+    2.2 task_utils和sse_utils分析
+        我们的项目事件类型:
+             class SSEEvent:   [sse_utils]
+                PROGRESS = "progress"   # 任务节点进度      <- add_running_task / add_done_task / update_task_update ( , True)
+                DELTA = "delta"         # LLM 流式输出增量  <- 模型响应文字片段!  文字
+                FINAL = "final"         # 最终完整答案      <- 最终结果  文字 + 图片  push_to_session(session_id,"final",{数据}) sse_utils
+                ERROR = "error"         # 错误信息         <- 显示报错信息
+
+             明确一句话:   前端 <----- 流式响应 <---- 后端   我们只需要将数据加入到对应队列!
+             响应的模型:
+                                       问题查询接口(1.启动查询图执行(异步)   ----------->   1  2  3  4  6  7 .....
+                                              2.节点将进度插入到对应队列)                        |
+                                     /                                            { session_id: [{事件类型:数据},{},{}] <- 没有数据能等 }
+                                   /                                                          |  get()
+                        客户端(html) <-------->   状态查询的流式接口                              |
+                                                    1.获取数据            ----->  生成器函数() while True
+                                                  2.生成器yield 返回
+                                                 3.StreamingResponse()
+
+        task_utils工具
+            1. 三个字典 running / done / task_status {session_id: [],[],str}
+            2. 向三个字典放数据 和 获取数据的函数  add..(,True)  get..                     <---导入流程
+            3. 将自己字典的数据打包(progress),推送sse队列中的函数 task_push_queue(task_id) -> progress
+        sse_utils 工具
+            1. 字典 session_id 对应的队列  {session:队列}   {1:[{progress:{}},{event:delta,data:{}}]}
+            2. 将数据推送到队列 push_to_session(session_id 1,"事件类型",{数据})
+            3. 生成器函数  async 函数(): while Ture / yield 对类   yield "event: progress"  sse_generator()
+    2.3 查询模块接口分析
+        接口1: 健康检查接口
+            - **路径**: `/health` (GET)
+            - **功能**: 检查服务存活状态
+        接口2: 返回chat.html页面
+            - **路径**: `/html` (GET)
+            - **功能**: 返回前端聊天界面
+            - **响应**: HTML 静态页面
+        接口3: 流式响应接口
+            - **路径**: `/stream/{session_id}` (GET)
+            - **功能**: 建立 SSE 长连接，实时推送任务进度和答案事件
+        接口4: 查询问题接口
+            - **路径**:  /query (POST)
+            参数: 请求  {query,session_id,is_stream}
+            响应:  流式  1 2[异步] 3 -> 快速返回结果    流式接口 -> 前端
+                 非流式  1 2[同步] 3 -> 一次获取结果 task_utils -> {} -> 前端
+    2.4 查询模块接口实现
+        步骤1: 定义对应的json schema类型
+        步骤2: 定义路径和接收参数
+        步骤3: 判断is_stream
+          true -> 流式 -> 异步
+             task.add_task(执行图的函数,query,session_id,is_stream)
+             return {message/session_id}
+          false -> 非流式 -> 同步
+             state [answer / image_urls] = 执行图的函数(query,session_id,is_stream)
+             done_list = task_utils
+             return {....}
+
+        问题:
+          1. [SSE] Warning: No queue found for session sess-m3fmcex1x7mof56ybf when pushing delta
+             没有创建sse的队列
+
+
+        # 同步函数 执行查询图的过程
+        def invoke_query_graph(original_query:str,session_id:str,is_stream:bool):
+            try:
+                # 为什么要添加is_stream?
+                # 流式 :  invoke_query_graph is_stream = True ->  task_utils ->  -> sse队列
+                # 非流式: invoke_query_graph is_stream = False -> done_list -> task_utils
+                update_task_status(session_id,TASK_STATUS_PROCESSING,is_stream)
+                # 1.创建图需要的state参数
+                state: QueryGraphState = create_query_default_state(
+                    session_id=session_id,
+                    original_query=original_query,
+                    is_stream=is_stream
+                )
+                logger.info(f"开始测试查询图流程,传入参数为:\n {json.dumps(state, indent=4, ensure_ascii=False)}")
+                # 2. 调用图对象
+                result = query_graph_app.invoke(state)
+                update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
+                logger.info(f"测试结束查询图流程,查询结果为:\n {json.dumps(result, indent=4, ensure_ascii=False)}")
+                return result
+            except Exception as e:
+                logger.exception(f"查询图执行出现错误!{e}")
+                update_task_status(session_id, TASK_STATUS_FAILED, is_stream)
+
+        # 接口4: 查询问题接口
+        @app.post("/query")
+        def query_question(task:BackgroundTasks,param:QueryRequestSchema):
+            # 1.获取参数
+            session_id:str = param.session_id
+            query:str      = param.query
+            is_stream:bool = param.is_stream
+            # 2.判断是不是流式
+            if is_stream:
+                task.add_task(invoke_query_graph,is_stream=is_stream,original_query=query,session_id=session_id)
+                # 3.流式的异步执行
+                return AsyncQueryResponseSchema(
+                    message=f"{query}问题正在查询和处理中...",
+                    session_id=session_id
+                )
+            else:
+                # 4.非流式的同步执行
+                result:QueryGraphState = invoke_query_graph(original_query=query,session_id=session_id,is_stream=is_stream)
+                done_list =  get_done_task_list(session_id)
+                return SyncQueryResponseSchema(
+                    message=f"{query}问题,查询成功!",
+                    session_id=session_id,
+                    answer=result.get("answer"),
+                    done_list=done_list,
+                    image_urls=result.get("image_urls",[])
+                )
+
+3. 使用非关系型数据库mongodb
 4. 实现查询web模块的历史聊天记录
+
+今日内容:
+  1. 查询图的状态节点等等
+  2. sse的使用 [1.data 2.data event 3. 项目模型 ]
+  3. taskutils/sseutils作用
+  4. 实现四个接口
