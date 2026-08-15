@@ -1,4 +1,5 @@
 import json
+import shutil
 import uuid
 from pathlib import Path
 
@@ -85,8 +86,17 @@ async def upload_files(task:BackgroundTasks,files:list[UploadFile]):
     local_dir_obj.mkdir(parents=True,exist_ok=True)
     local_file_path_obj:Path = local_dir_obj / upload_file.filename
     # 上传数据
-    data = await upload_file.read()
-    local_file_path_obj.write_bytes(data = data)
+
+    # 客户端 -> uvicorn ->  > 1MB -> 本地磁盘缓存临时文件 ->  接口 -> 读取磁盘文件 -> read() -> 磁盘中文件一次加载内存 -> 内容溢出(oom)
+    # data = await upload_file.read()
+    # local_file_path_obj.write_bytes(data = data
+
+    with local_file_path_obj.open("wb") as file_buffer:  #本地文件的引用
+        # 参数1: 将哪个文件     源
+        # 参数2: 写入到哪个文件  目标
+        # 8 * 1024
+        shutil.copyfileobj(upload_file.file, file_buffer)
+
     #3. 异步调用图的执行过程
     task.add_task(invoke_import_graph,task_id=task_id,local_file_path=str(local_file_path_obj),local_dir=str(local_dir_obj))
     #4. 返回结果
