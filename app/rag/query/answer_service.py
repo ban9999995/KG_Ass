@@ -17,8 +17,8 @@ def generate_answer(state: QueryGraphState) -> QueryGraphState:
     """
     ""
     print("---node_answer_output 节点处理开始---")
-    add_running_task(state["session_id"], sys._getframe().f_code.co_name, state.get("is_stream"))
-
+    # add_running_task(state["session_id"], sys._getframe().f_code.co_name, state.get("is_stream"))
+    # -----------------------
     session_id = state["session_id"]
     is_stream = state.get("is_stream", True)
     base_answer = state.get("answer") or f"这是关于「{state.get('original_query', '当前问题')}」的测试回答，正在演示打字机流式输出效果。"
@@ -30,26 +30,24 @@ def generate_answer(state: QueryGraphState) -> QueryGraphState:
             push_to_session(session_id, SSEEvent.DELTA, {"delta": ch})
             time.sleep(0.2)
 
-        image_urls = ["http://39.105.7.90:9000/knowledge-base-files/upload-images/hak180使用说明书/03afecdcf24c25603d447545a08012a468f4d7dd7a2700484ff50c91398492a7.jpg",
-                      "http://www.baidu.com/img/bd_logo.png"]
-        push_to_session(
-            session_id,
-            SSEEvent.FINAL,
-            {
-                "answer": final_text,
-                "status": "completed",
-                "image_urls": image_urls
-            }
-        )
+        # ------------ 推过去了!!
+
+        # ------------ 推过去了!!
         logger.info(f"流式输出完成，总长度: {len(final_text)}")
     else:
         final_text = base_answer
 
-    add_done_task(state['session_id'], sys._getframe().f_code.co_name, state.get("is_stream"))
+    # add_done_task(state['session_id'], sys._getframe().f_code.co_name, state.get("is_stream"))
+    # --------------没推过去
+
+    image_urls = [
+        "http://39.105.7.90:9000/knowledge-base-files/upload-images/hak180使用说明书/03afecdcf24c25603d447545a08012a468f4d7dd7a2700484ff50c91398492a7.jpg",
+        "http://www.baidu.com/img/bd_logo.png"]
     print("---node_answer_output 节点处理结束---")
     # 关键点：return 必须保留 session_id！
     return {
         "session_id": session_id,  # 必须带回去
         "answer": "你的回答内容",
-        "is_stream": state.get("is_stream")
+        "is_stream": state.get("is_stream"),
+        "image_urls":image_urls
     }

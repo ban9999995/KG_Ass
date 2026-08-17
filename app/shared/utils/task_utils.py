@@ -16,9 +16,6 @@ _tasks_done_list: Dict[str, List[str]] = {}
 # value: status 字符串（如 pending/processing/completed/failed）
 _tasks_status: Dict[str, str] = {}
 
-# key: task_id
-# value: 任务结果（例如 query 的 answer）
-_tasks_result: Dict[str, Dict[str, str]] = {}
 
 TASK_STATUS_PENDING = "pending"
 TASK_STATUS_PROCESSING = "processing"
@@ -59,9 +56,6 @@ def _ensure_task(task_id: str) -> None:
         _tasks_running_list[task_id] = []
     if task_id not in _tasks_done_list:
         _tasks_done_list[task_id] = []
-    if task_id not in _tasks_result:
-        _tasks_result[task_id] = {}
-
 
 def _to_cn(node_name: str) -> str:
     """将节点名转换为中文展示名；若无映射则返回原名。"""
@@ -109,23 +103,6 @@ def add_done_task(task_id: str, node_name: str, is_stream: bool = False) -> None
 
     if is_stream:
         task_push_queue(task_id)
-
-
-def set_task_result(task_id: str, key: str, value: str) -> None:
-    """
-    存储任务结果字段（如 answer / error）。
-    """
-    _ensure_task(task_id)
-    _tasks_result[task_id][key] = value
-
-
-def get_task_result(task_id: str, key: str, default: str = "") -> str:
-    """
-    获取任务结果字段（如 answer / error）。
-    """
-    _ensure_task(task_id)
-    return _tasks_result.get(task_id, {}).get(key, default)
-
 
 def get_task_status(task_id: str) -> str:
     """
@@ -188,4 +165,3 @@ def clear_task(task_id: str):
     _tasks_running_list.pop(task_id, None)
     _tasks_done_list.pop(task_id, None)
     _tasks_status.pop(task_id, None)
-    _tasks_result.pop(task_id, None)

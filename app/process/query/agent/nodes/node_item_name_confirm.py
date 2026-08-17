@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 
 from app.shared.runtime.logger import node_log
 from app.rag.query.item_name_confirm_service import confirm_item_name
@@ -17,6 +18,7 @@ def node_item_name_confirm(state):
     add_running_task(state["session_id"],"node_item_name_confirm", state["is_stream"])  # 记录节点状态 [哪个节点运行中]
     # 调用 rag/query service 层
     state = confirm_item_name(state)  # 调用业务函数
+    time.sleep(3)
     # 识别完成后写入完成列表，方便前端展示当前节点已结束。
     add_done_task(state["session_id"], sys._getframe().f_code.co_name, state["is_stream"])
     return state  # 结果返回给图
