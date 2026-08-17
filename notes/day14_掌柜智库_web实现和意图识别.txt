@@ -386,3 +386,112 @@
         参数: path session_id / param limit = 10
         响应: {session_id:x,items:[{id....}]}
    4.3 历史聊天记录接口实现
+
+5. 节点: node_item_name_confirm
+   节点作用:
+      根据历史聊天的上下文信息(辅) + 本次提问的原始问题(主)
+      1. 重写问题 原始问题 -> 大模型 -> 更专业的问题 [1.取消代词 2.取消方言 3. 明确主体]
+      2. 提取item_names  原始问题 + 上下文信息 -> 大模型 -> item_names(模型) -> 向量数据库相似度搜索 -> 打分 -> 确定 item_names | 不确定 -> answer
+
+          |------------------------------------------------|
+          |      问题检索                                   |
+      主体识别   假设检索   node_rrf  node_reranker  node_answer_output -> end
+                网络mcp
+   节点参数:
+      使用:  session_id -> (有效)聊天记录 / original_query -> 原始问题 / is_stream  -> 记录节点状态
+      生成:  成功(有明确的item_names): item_names / rewritten_query
+            不确定的item_names      : answer
+            完全不确定item_names    :  answer
+   节点步骤:
+      1. 定义大模型 原始问题 提取 item_name / 重写问题
+      2. 初始化milvus
+      3. 初始化嵌入式模型
+      4. item_name向量化->milvus混合检索
+      5. 判断是否确定还是可选的,完全不确定的
+      6. 更新state属性即可
+
+      1. 获取并校验参数
+         get_data_and_validate(state) -> tuple[str,str]: session_id,original_query
+         1.1 获取请求参数
+         1.2 非空校验
+         1.3 为空异常处理
+         1.4 不为空返回结果
+      2. 先查询有效的历史聊天记录
+         get_valid_history_messages(session_id)->list[dict]
+         2.1 近10条聊天记录,调用history_utils查询对应session_id和limit聊天数据 -> find({session_id:session_id}).order({ts:-1}).limit(10)
+         2.2 清洗数据,获取有效的聊天记录! item_names不为空!
+         2.3 返回有效的聊天列表
+      3. 调用模型使用聊天记录+原始问题提取item_names(模型提取)和重写问题
+         有效聊天记录+原始问题 -> 提示词 -> 模型 -> item_names:[] rewritten_query   模型返回json: 1.提示词说明要求 2.提示词提供示例 3.模型设置json参数 4.返回json处理和校验
+         call_model_extract_item_names_and_rewritten_query(原始问题,有效的聊天列表) -> dict[str,Any]
+         3.1 准备大语言模型客户端 infra.llm_model(模型的名字,json_mode=True)
+         3.2 加载和封装提示词信息
+             history_text=有效聊天记录拼接的字符串 {_id,role[user | assistant],text [原始问题|回答的答案 截取100],rewritten_query,item_names,image_urls,ts)}
+             query=原始问题
+             提示词文本 =  load_prompt
+             HumanMessage=[文本]
+         3.3 定义json模型调用链  chains = 模型 | JSONOutputParser()
+         3.4 调用获取返回字典dict
+         3.5 进行返回数据校验 有item_names属性 -> []  有rewritten_query -> 原始问题
+         3.6 返回即可dict
+      if 3返回的字典有item_names且不为空:
+        4. 根据模型提取的item_names进行向量库混合检索
+        5. 置信度处理(判断分)分值区分,我们获取 确定的列表 / 可选的列表 / 没有
+      6. 结果处理 根据列表 修改state item_names + rewritten_query (确定的列表) | answer 可选 | answer 没有
+      7. 记录本次提问的问题(user)
+      8. 返回state
+
+
+   回顾milvus检索:
+       回顾单列(单向量)检索: https://milvus.io/docs/zh/single-vector-search.md
+           结果 =  milvus客户端.search(
+                collection_name = 表名/集合名,
+                data = [匹配的条件向量 1 , 2, 3]
+                anns_field = "向量列名",
+                limit = 5 ,
+                filter = "过滤条件",
+                ids  = [主键值,主键值],  先走过滤条件 item_name == x and id in ids  然后再相似度搜索  limit 5
+                output_fields = [item_name,file_title]
+             )
+
+            [  -> 列表里面有列表 原因: 批量查询...
+              [
+                 {
+                    id/chunk_id: 主键值,
+                    distance   : 分   , 0-1
+                    entity:{
+                        item_name:x,
+                        file_title:x
+                    }
+                 }
+              ]
+            ]
+       回顾混合(稠密和稀疏向量)检索:
+          混合检索一个综合结果,相对单向量搜索结果更准确!!
+          方案: 1. 一个字段的稠密和稀疏 item_name / content
+               2. 多模态搜索 一个实体的多种维度检索 识别动物: 图片 叫声 是否吃人
+          步骤 1：创建多个 AnnSearchRequest 实例  AnnSearchRequest = 一路检索条件
+          步骤 2：配置 Rerankers 策略 结果融合
+          步骤 3: 触发混合检索
+               res = client.hybrid_search(
+                    collection_name="my_collection",  -> 集合
+                    reqs=[1,2,3,4], -> 第一步创建AnnSearchRequest list
+                    ranker=ranker, -> 结果融合规则
+                    limit=2   -> 最终条数
+                )
+          结果:
+              [
+                [   -> 只有一个列表 |  保持结果解析的对称性
+                    {} , {}
+                ]
+              ]
+
+       配置文件检查:
+       milvus工具类检查 :
+       修改milvus_ifra  :
+
+ 今日内容:
+    1. mongodb 练习
+    2. 聊天记录接口
+    3. milvus单列和混合检索
+    4. node_item_name_confirm 前三步
