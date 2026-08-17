@@ -1,4 +1,5 @@
 from app.process.query.agent.state import QueryGraphState
+from app.shared.clients import save_chat_message
 from app.shared.utils.task_utils import add_done_task,add_running_task,push_to_session
 from app.shared.utils.sse_utils import SSEEvent
 from app.shared.runtime.logger import logger
@@ -45,6 +46,21 @@ def generate_answer(state: QueryGraphState) -> QueryGraphState:
         "http://www.baidu.com/img/bd_logo.png"]
     print("---node_answer_output 节点处理结束---")
     # 关键点：return 必须保留 session_id！
+
+    # 一次会话包含: 问题 + 答案
+    # 模拟回答聊天记录
+    save_chat_message(
+        session_id=state.get("session_id"),
+        role="assistant",  # 提问
+        text=final_text,  # 前端展示
+        rewritten_query=f"重写的问题:{state.get('original_query')}",
+        item_names=["烫金机"],
+        image_urls=[
+        "http://39.105.7.90:9000/knowledge-base-files/upload-images/hak180使用说明书/03afecdcf24c25603d447545a08012a468f4d7dd7a2700484ff50c91398492a7.jpg",
+        "http://www.baidu.com/img/bd_logo.png"]
+    )
+
+
     return {
         "session_id": session_id,  # 必须带回去
         "answer": "你的回答内容",

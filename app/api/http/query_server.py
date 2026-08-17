@@ -3,7 +3,8 @@ from fastapi.requests import Request
 from fastapi.responses import FileResponse,StreamingResponse
 from pathlib import Path
 
-from app.api.schema.query_schema import QueryRequestSchema, SyncQueryResponseSchema, AsyncQueryResponseSchema
+from app.api.schema.query_schema import QueryRequestSchema, SyncQueryResponseSchema, AsyncQueryResponseSchema, \
+    ClearHistoryResponseSchema, SearchHistoryResultResponseSchema, SearchHistoryItemResponseSchema
 from app.shared.runtime.logger import logger,PROJECT_ROOT
 from app.shared.utils.sse_utils import sse_generator, push_to_session, SSEEvent
 from datetime import datetime
@@ -15,6 +16,10 @@ from app.process.query.agent.state import QueryGraphState,create_query_default_s
 from app.process.query.agent.main_graph import query_graph_app
 import json
 from app.shared.utils.sse_utils import create_sse_queue
+
+from app.shared.clients.mongo_history_utils import get_recent_messages,clear_history
+
+
 
 app = FastAPI()
 
@@ -114,6 +119,41 @@ def query_question(task:BackgroundTasks,param:QueryRequestSchema):
             done_list=done_list,
             image_urls=result.get("image_urls",[])
         )
+
+# todo 为了演示效果,在第一个节点 和 最后一个节点分别添加user / assistant角色的聊天记录!
+
+# 接口5: 清空聊天记录
+@app.delete("/history/{session_id}")
+def clear_history_api(session_id:str):
+    deleted_count = clear_history(session_id=session_id)
+    logger.info(f"清空:{session_id}对应聊天记录,清空:{deleted_count}条!")
+    return ClearHistoryResponseSchema(
+        message=f"清空:{session_id}对应聊天记录,清空:{deleted_count}条!",
+        deleted_count=deleted_count
+    )
+
+# 接口6: 查询聊天记录
+@app.get("/history/{session_id}")
+def search_history_api(session_id:str,limit:int=10):
+    # dict => key => BSON  _id ObjectId
+    history:list[dict] = get_recent_messages(session_id,limit=limit)
+    logger.info(f"查询:{session_id}聊天记录为:{history}")
+    return SearchHistoryResultResponseSchema(
+        session_id=session_id,
+        items=[
+             SearchHistoryItemResponseSchema(
+                 id = str(item.get("_id")),
+                 session_id=session_id,
+                 role=item.get("role"),
+                 text=item.get("text"),
+                 rewritten_query=item.get("rewritten_query"),
+                 item_names=item.get("item_names"),
+                 image_urls=item.get("image_urls"),
+                 ts = item.get("ts")
+             )
+             for item in history
+        ]
+    )
 
 if __name__ == "__main__":
     import uvicorn

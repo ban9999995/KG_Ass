@@ -203,8 +203,6 @@
                向队列推送数据方法 push_to_session 真正将数据加入到队列  progress -> task_utils | delta / final / 其他事件
                生成器函数 -> 前端流式接口绑定
 
-
-
         # 同步函数 执行查询图的过程
         def invoke_query_graph(original_query:str,session_id:str,is_stream:bool):
             try:
@@ -254,12 +252,137 @@
                     done_list=done_list,
                     image_urls=result.get("image_urls",[])
                 )
-
 3. 使用非关系型数据库mongodb
-4. 实现查询web模块的历史聊天记录
+   3.1 为啥要存储历史聊天记录
+       聊天记录明确上下文信息
+       例如: 消除代词 和 提取item_name
+            ta 好不好用?  -> ta 上下文 -> 模型 -> 主体  [主体识别]
+                         -> ta 好不好用? -> 问题重写 ->  xxx 好不好用? [问题重写]
+       给模型提供参考回答
+   3.2 聊天记录的范围是多大
+       session_id失效 -> session_id啥时候失效呢? -> local_storage -> 浏览器关 再开
+       一个浏览器不主动清空,一直存在session_id! 关了 -> 再开
+   3.3 存储聊天记录的结构
+       session_id       会话的标识  [每个'人' -> 会话]
+       role             角色 user -> 问题 / assistant -> 模型的回答   一次对话存储2条历史记录
+       text             记录的聊天文本   user->问题 [original]  assistant->回答
+       rewritten_query  重写后的问题     不会在页面展示  1. 主体识别 2. 问题重写 3. 问题检索
+       item_names       关联的主体       不会在页面展示  1. 主体识别 2. 问题重写 3. 问题检索
+       image_urls       存储前端展示图片  会在页面展示 [assistant]
 
-今日内容:
-  1. 查询图的状态节点等等
-  2. sse的使用 [1.data 2.data event 3. 项目模型 ]
-  3. taskutils/sseutils作用
-  4. 实现四个接口
+       session_id  role       text       rewritten_query  item_names  image_urls
+          1        user       ta好不..     烫金机是否起来..   [烫金机]      []
+          1     assistant    烫金机到底好.  烫金机是否起来..   [烫金机]      [1,2,3]
+                              answer
+       位置1: 前端接口 -> 查询聊天记录 -> json -> 前端    查询近期10条全部聊天记录
+       位置2: 前端接口 -> 清空聊天记录 -> session_id
+       位置3: 意图识别和主体确认  node_item_name_confirm  查询近期10条内'有效的'聊天记录
+       位置4: 答案输出接口 -> 本次重写的问题 | chunks | 聊天记录 -> 答案 查询近期10条内'有效的'聊天记录
+   3.4 存储聊天记录的技术
+       存储技术: mysql | mongodb
+       mongodb是一种非关系型数据库! 性能有优势!
+       但是虽然是非关系型数据库,可以存储结构化数据!
+       mongodb适合存储查询要求不是特别高(事务)的关系型数据库
+   3.5 mongodb的基本使用
+       步骤1: 安装mongo
+            **1. 拉取 MongoDB 镜像**
+            ```bash
+            docker pull mongo:latest
+            ```
+            **2. 运行 MongoDB 容器**
+            ```bash
+            docker run -d --name mongo -p 27017:27017 mongo:latest
+            ```
+            **3. 常用管理命令**
+            ```bash
+                docker ps
+                docker stop mongo
+                docker start mongo
+                docker restart mongo
+                docker exec -it mongo mongosh
+            ```
+       步骤2: 装mongo可视化工具
+            https://www.mongodb.com/try/download/compass
+            mongodb://39.105.7.90:27017/
+       步骤3: 基本语法
+             mongodb://39.105.7.90:27017/
+            库: use 库  -> 创建并切换   默认没有库! 因为延迟创建,第一次使用的时候才会真正的创建!!
+            表(集合): 集合类似mysql的表! 有行有列! 他不需要提前像mysql一样先指定好! 根据插入的数据结构创建的'表'的结构!
+                     db [当前库/固定] . 表名 [没有就创建,有就直接使用]  . crud函数(数据)
+                     db.user / users . 函数()
+            https://www.mongodb.com/zh-cn/docs/manual/
+            增: db.表名.insertOne({id:"xx"})/Many([{},{}])  每个插入的数据自带一个 _id 主键 ObjectId
+            查:
+               db.表名.find() -> 查询全部
+               db.表名.find({BSON}) -> 条件查询
+               db.表名.find({key:value})  -> 单个条件 等于
+               https://www.mongodb.com/zh-cn/docs/manual/reference/mql/expressions/  [布尔/比较/数组]
+               db.表名.find({key:{ $比较符号 gt gte lt lte ne  :  值  }})  -> 单个条件 非等于语法  > < != in...
+               db.表名.find({name:"xx",age:{$gt:19}}) -> 多个条件 and -> 只要在{1,2,3,4} 默认是and
+               db.表名.find({   $or:   [  {name:"xx"}  ,  {age:{$gt:19}}  ]   })-> 多个条件 or
+                            -> 有and 还有 or    name=x or (age >= x and  city = x)  || name = x and (age >= or  city = x)
+
+                有and 还有 or    name=x or (age >= x and  city = x)      -> find({$or:[ {name:x} ,{age:{$gte:x},city:x}]})
+               db.users.find().sort({ age: -1 }).limit(5)
+               db.users.find().sort({age:-1}).skip(5).limit(5)
+            改:
+               db.users.updateOne(
+                  { name: "张三" }, -> 条件 where
+                  { $set: { age: 26 , name : 二狗子 } }  -> 要修改的值
+                )
+                db.users.updateMany(
+                  { city: "Beijing" },
+                  { $set: { status: "active" , key : value } }
+                )
+            删:
+               db.users.deleteOne({ name: "王五" })
+               db.users.deleteMany({ age: { $gte: 35 } })
+            索引:
+               db.<collection>.createIndex( { <field>: <sort-order> } )
+
+               单列索引: 给某一个常用查询的列(session_id)创建一种额外的数据结构,提高查询效率!
+                       db.users.createIndex( { session_id: 1 } )  # 单列查询随便写
+                       场景: 根据某个条件查询 -> 条件对应字段 -> 索引 -> 提高效率!
+
+               多列索引(复合索引): 给多个列一起设置索引数据结! 列之间是有优先级! 第一列相同 才会触发第二列的规则 ...
+                       db.users.createIndex( { session_id: 1 , ts: -1 } )  # 多列查询随便写?
+                       场景: 1. 根据多个列查询  session_id =  age = x    # 多列查询随便写
+                               隐形的好处: 前缀原则 (最左前缀原则) - mysql索引
+                                            a  b  c d
+                               {a,b,c,d}    a  b  c
+                                            a  b
+                                            a
+
+                                            b  a  不行
+                                            c  b  也不行
+                                            a  c  也不行
+                            2. 查询+排序   {查询:1/-1,排序:等于查询排序规则 倒序-1,正序 1}              # 多列查询不能随便写
+                               前提: 插叙字典快速定位一定需要有索引!
+                               前提下: 排序根据数据从大到小或者从小到大获取! 以前创建索引,索引的排序规则等于查询的排序规则,那就省事了!
+
+4. 实现查询web模块的历史聊天记录
+   4.1 熟悉pymongo语法和工具类解读
+      步骤1: 安装pymongo的依赖 uv add  pymongo [已经装过]
+      步骤2: 创建链接客户端  client =  MongoClient(uri="mongodb://账号:密码@host:端口号/主动链接到对应的数据库?参数...")
+      步骤3: 选中库和表  database = client['库名']  == use 库名 || 表对象 =  database['表名']  db.表名
+      步骤4: crud以及索引操作 表对象 .  命令 insertOne (小驼峰) | 函数 insert_one (蛇形命名法)
+            表对象.insert_many([dict])
+            表对象.find({"key":"xx","name":{"$ne":"xx"}})
+      项目: 1. 存储聊天记录 2. 查询聊天记录 3.删除聊天记录  mongo / minio / milvus -> 工具类 -> 提前完成客户端的创建!
+      检查配置: .env
+         MONGO_URL=mongodb://39.105.7.90:27017
+         MONGO_DB_NAME=kb002  <- 改成自己的名字
+      解读: app/shared/clients
+           app/shared/clients/mongo_history_utils.py
+   4.2 历史聊天记录接口分析
+       接口1： 刪除聊天記錄
+        地址: /history/{session_id}
+        方式: delete
+        参数: path
+        响应: {message:x,deleted_count:0}
+       接口2: 查询聊天记录
+        地址: /history/{session_id}?limit=x
+        方式: get
+        参数: path session_id / param limit = 10
+        响应: {session_id:x,items:[{id....}]}
+   4.3 历史聊天记录接口实现

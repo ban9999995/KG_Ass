@@ -41,6 +41,7 @@ class HistoryMongoTool:
             # 为chat_message集合创建复合索引，提升查询性能
             # 索引规则：session_id升序 + ts降序，适配"按会话查最新记录"的核心查询场景
             # create_index自带幂等性：索引已存在时不会重复创建，无需额外判断
+            # db.表名.createIndex([])
             self.chat_message.create_index([("session_id", 1), ("ts", -1)])
 
             # 记录成功日志，确认数据库连接和初始化完成
@@ -100,7 +101,6 @@ def clear_history(session_id: str) -> int:
         logger.error(f"Error clearing history for session {session_id}: {e}")
         # 异常时返回0，标识删除失败
         return 0
-
 
 def save_chat_message(
         session_id: str,
@@ -206,6 +206,7 @@ def get_recent_messages(session_id: str, limit: int = 10) -> list[dict[str, Any]
         # limit(limit)：限制返回的最大条数
         cursor = mongo_tool.chat_message.find(query).sort("ts", -1).limit(limit)
         # 将游标转为列表，触发实际数据库查询，获取所有符合条件的文档
+        # [{dict}]
         messages = list(cursor)
         # 返回查询结果列表
         return messages
