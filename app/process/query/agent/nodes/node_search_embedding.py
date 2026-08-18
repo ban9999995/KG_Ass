@@ -12,8 +12,18 @@ def node_search_embedding(state):
     """
     add_running_task(state["session_id"], sys._getframe().f_code.co_name, state.get("is_stream"))
     state = search_by_embedding(state)
-    time.sleep(3)
     add_done_task(state["session_id"], sys._getframe().f_code.co_name, state.get("is_stream"))
     return {
-        "embedding_chunks":[]
+        "embedding_chunks":state['embedding_chunks']
     }
+
+
+if __name__ == "__main__":
+    test_state = {
+        "session_id": "test_search_embedding_001",
+        "rewritten_query": "HAK 180 烫金机怎么清洁外部设备?",
+        "item_names": ["Brother HAK180烫金机"],
+        "is_stream": False,
+    }
+    result = node_search_embedding(test_state)
+    print(result)
