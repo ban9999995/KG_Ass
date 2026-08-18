@@ -368,3 +368,18 @@
    节点作用:
    节点参数:
    节点步骤:
+
+今日内容总结:
+   1. item_name_confirm
+      milvus的单类检索  [[],[],[]] = milvus.search( collection_name , filter = "过滤条件" , limit = topk ,
+                                anns_field="检索列" , data = [1,2,3] , output_fields = [1,2,3,4] , ids=[1,2,3] )
+      milvus的混合检索
+         创建AnnSearchRequest  (anns_field,data =[1],expr="过滤条件",param="相似度比较",limit)
+         创建Rerank排名器  weight -> 分 -> 分 + 权重 / rrf -> 排名   1 / k + rank   k平滑参数 = 60
+         进行混合检索  milvus.hybird_search(collection_name = , reqs = [] , rerank = x , limit = 最终数量 , output_fields = []
+         [ [] ]
+  2. 问题检索
+  3. 假设性检索  为啥要假设性检索?  丰富查询语义! 原始语义单薄,检索命中低!! 通过模型提供参考答案,配置重写问题! 提高语义匹配度!
+               假设性是一个双刃剑, 问题对应回答是极度隐私或者内部属性,模型开始瞎说! 参考错的,命中更不准了!
+               后续 rrf融合 问题 + 假设性检索 配置每个路权重! 通过调整权重降低影响!!
+  4. 联网mcp   mcp -> 联网获取别人提供工具!
