@@ -279,8 +279,25 @@
          state[embedding_chunks] = list[dict]
 6. 多路检索: node_search_embedding_hyde
    节点作用:
+       为此，**node_search_embedding_hyde** 作为独立的增强检索支路，不替代基础向量检索，旨在补充优化弱语义场景的召回能力。该节点基于 HYDE（Hypothetical Document Embeddings）增强检索思路实现，核心逻辑如下：
+        1. 依托大模型，基于用户原始问题生成贴合业务场景、语义饱满的假设性标准回答；
+        2. 拼接标准化改写问句与生成的假设文档，构建高语义密度的检索输入；
+        3. 复用 Milvus 混合向量检索链路，生成第二路增强召回结果。
+       问题 -> 重写问题 -> 模型 -> 参考答案 ->  [ 重写问题 + 参考答案[假设性答案] 加重了我们检索的语义 ] -> 向量检索 -> 得到结果
+       双刃剑: 公司文档是非常内部和隐私!外部没有参考数据的! 回答内容本身出现幻觉! 参考答案都是错的! 向量数据库匹配更不准!
+            问题检索
+                       ->  rrf [看重排名,更加公平] + 引入权重
+            假设性检索
    节点参数:
+       使用: rewritten_query  item_names
+       生成: hyde_embedding_chunks
    节点步骤:
+      1
+      2.使用模型给重写问题生成假设性答案! model_answer
+      3.向量数据库检索(rewritten_query,item_names,model_answer)
+        create_embedding([rewritten_query + model_answer ])
+      4.结果处理
+      5....
 7. 多路检索: node_web_search_mcp
    节点作用:
    节点参数:
