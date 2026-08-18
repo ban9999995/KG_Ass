@@ -48,7 +48,7 @@ def create_hybrid_search_requests(dense_vector, sparse_vector, dense_params=None
     """
     # 稠密向量默认搜索参数：余弦相似度（COSINE），适配BGE-M3稠密向量并与建库参数保持一致
     if dense_params is None:
-        dense_params = {"metric_type": "IP"}
+        dense_params = {"metric_type": "COSINE"}
     # 稀疏向量默认搜索参数：内积（IP），适配BGE-M3稀疏向量
     if sparse_params is None:
         sparse_params = {"metric_type": "IP"}
@@ -92,8 +92,13 @@ def hybrid_search(client, collection_name, reqs, ranker_weights=(0.5, 0.5), norm
     try:
         # 初始化加权排名器：按权重融合稠密/稀疏向量的搜索结果
         # norm_score=True：先将两个向量评分归一化到0~1区间，再加权计算
+        """
+          参数1: *nums  0.5  0.5  -> 数量等于 = reqs的数量 几路 = 顺序也要一一对应
+          参数2: norm_score = True 归一化 -> WeightedRanker -> 把每路的分 -> 拉 0-1 区间 -> 算
+          嵌入式模型: 向量归一化 -> 向量 / 模长  -> 稠密 ip / cosine 在一个区间 [-1 1]
+        """
         rerank = WeightedRanker(ranker_weights[0], ranker_weights[1], norm_score=norm_score)
-
+        # rerank = RRFRanker(k=30)
         # 默认返回字段：文档标识字段
         if output_fields is None:
             output_fields = ["item_name"]
