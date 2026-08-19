@@ -1,0 +1,51 @@
+1. 数据库检索结果融入: node_rrf
+   节点作用:
+        数据的两路可以使用rrf融合?  1. 具有相同的标识 2. 具有有效的排名!
+        embedding_chunks: list  # 普通向量检索回来的切片
+                        [{chunk_id,file_tile...,content,score,type:milvus},{chunk_id,file_tile...,content,score,type:milvus}]
+        hyde_embedding_chunks: list  # HyDE 检索回来的切片
+                        [{chunk_id,file_tile...,content,score,type:milvus},{chunk_id,file_tile...,content,score,type:milvus}]
+        设置权重! rrf + 权重:   rrf = 1 / k + rank  ->  权重 * ( (1/k+rank)  +  权重 * ( (1/k+rank)
+   节点参数:
+       使用:  embedding_chunks  hyde_embedding_chunks
+       生成:  rrf_chunks
+   节点步骤:
+       1. 获取并校验参数
+       2. 多路数据+权重融合到列表中,方便后续的遍历 [不用声明函数]
+          [ (权重,embedding_chunks), (权重,hyde_embedding_chunks) ]
+       3. 使用rrf+权重计算融合分,并且排名和截取topk
+           reciprocal_rank_fusion( list[tuple[float,list]],k:int=60) -> list[dict chunk]
+           [ (权重,embedding_chunks), (权重,hyde_embedding_chunks) ]
+
+           记录分的字典 {chunk_id:得分}
+           记录数据字典 {chunk_id:chunk {score: 0.6 -> milvus相似度的分 }}  -> 多路不重复存在的chunk
+           for 权重,embedding_chunks in   [ (权重,embedding_chunks), (权重,hyde_embedding_chunks) ]
+               for rank, chunk{}  in e( 每路的集合 , index = 1)
+                   记录分的字典[chunk_id] = 记录分的字典.get(chunk_id,0.0) + 权重 * (1/k+rank)
+                   记录数据字典[chunk_id] = chunk
+
+           记录数据字典 -> chunk -> 记录分的字典的分 -> chunk -> list
+           list -> 排序 -> 倒序
+           解决固定的长度 list[:topk]
+           返回
+
+           记录分的字典 {chunk_id:得分}
+           for rank, chunk{}  in e( 每路的集合 , index = 1)
+                字典[chunk_id] = 字典.get('chunk_id',0.0)  +  权重 * (1/k+rank)
+
+           for rank, chunk{}  in e( 每路的集合 , index = 1)
+                字典[chunk_id] = 字典.get('chunk_id',0.0)  +  权重 * (1/k+rank)
+      4. 更新state [rrf_chunks] = x
+      5. 返回结果..
+
+2. 数据库检索结果融入: node_reranker
+   节点作用:
+   节点参数:
+   节点步骤:
+   reranker模型准备:
+
+3. 数据库检索结果融入: node_output_answer
+   节点作用:
+   节点参数:
+   节点步骤:
+   reranker模型准备:

@@ -364,10 +364,7 @@
               )
               .cleanup()
 
-8. 数据库检索结果融入: node_rrf
-   节点作用:
-   节点参数:
-   节点步骤:
+
 
 今日内容总结:
    1. item_name_confirm
