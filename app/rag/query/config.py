@@ -19,3 +19,6 @@ RERANK_GAP_ABS: float = 0.2   # 断崖的分数绝对值
 RERANK_MAX_INPUT_TOKENS: int = 508 # 上下文的有效窗口数量 514 - 2 - 4
 RERANK_SUMMARY_CHAR_RATIO: float = 1.3 # 算出来 answer压缩后是多少token [1300token]! -> 中文字符和token的比 1.3->   大语言模型 字符 1000
 RERANK_MIN_SUMMARY_CHARS: int = 50  # 算 10个字符 -> 大模型 -> 最少50,保证压缩的有效性!!!  [ 截取 压缩总结不完善 ]
+
+
+SUPPORTED_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
