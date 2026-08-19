@@ -15,7 +15,7 @@ class ModelProvider:
     def create_embeddings(self,texts: list[str])-> dict[str, list]:
         return generate_embeddings(texts)
     # 4. reranker模型  打分 = 算token数量
-    def compute_scores(self,question_answer_pair:list[list[str]]) -> list[float]:
+    def compute_scores(self,question_answer_pair:list[tuple[str,str]]) -> list[float]:
         reranker_model = get_reranker_model()
         score_list: list[float] = reranker_model.compute_score(question_answer_pair,normalize=True)
         return score_list
