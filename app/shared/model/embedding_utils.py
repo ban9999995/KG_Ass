@@ -1,12 +1,10 @@
 """
 工具模块，负责提供 embedding 相关的辅助能力。
 """
-from pathlib import Path
-
 from pymilvus.model.hybrid import BGEM3EmbeddingFunction
 
 from app.shared.config.embedding_config import embedding_config
-from app.shared.runtime.logger import logger, PROJECT_ROOT
+from app.shared.runtime.logger import logger
 
 _DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 _DEFAULT_EMBEDDING_DEVICE = "cpu"
@@ -27,11 +25,6 @@ def get_bge_m3_ef() -> BGEM3EmbeddingFunction:
     # 从环境变量加载配置，无配置则使用默认值
     # 本地有可以使用本地地址！ 没有使用 "BAAI/bge-m3" 会自动下载！ 如果云端部署也可以使用url地址！
     model_name = embedding_config.bge_m3_path or embedding_config.bge_m3 or _DEFAULT_EMBEDDING_MODEL
-    # 相对路径统一基于项目根目录解析为绝对路径，避免因 CWD 不同导致找不到本地模型
-    # 本地路径(如 ./models/bge-m3)拼接后存在则命中；HF 仓库 id(如 BAAI/bge-m3) 拼接后不存在则保持原样
-    candidate = PROJECT_ROOT / model_name
-    if not Path(model_name).is_absolute() and candidate.exists():
-        model_name = str(candidate)
     device = embedding_config.bge_device or _DEFAULT_EMBEDDING_DEVICE
     use_fp16 = embedding_config.bge_fp16
 

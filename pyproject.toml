@@ -1,5 +1,5 @@
 [project]
-name = "env_rag"
+name = "ai_0119_rag"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
