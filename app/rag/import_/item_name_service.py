@@ -49,7 +49,9 @@ def call_model_recognition_item_name(chunks,file_title) -> str:
     )]
     chains = llm_model | StrOutputParser()
     # 2.5 调用模型进行item_name识别.并获取返回结果
+    logger.info(f"[LLM调用] 开始调用模型识别item_name：file_title={file_title}，上下文chunks数={min(len(chunks), 5)}")
     item_name = chains.invoke(messages)
+    logger.info(f"[LLM调用] 模型返回成功：item_name={item_name!r}")
     # 非空判断进行默认值
     if not item_name:
         logger.info(f"item_name没有识别到,使用file_title:{file_title}赋予默认值!!")

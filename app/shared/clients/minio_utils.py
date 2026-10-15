@@ -65,12 +65,10 @@ def _create_bucket_ready(client: Minio):
     # 检查桶是否存在
     if not client.bucket_exists(bucket_name):
         client.make_bucket(bucket_name)  # 不存在则创建桶
-        # 为新桶设置访问策略（允许公开读取，适配图片在线访问需求）
-        client.set_bucket_policy(bucket_name, _set_bucket_policy(bucket_name))
-        logger.info(f"MinIO桶 {bucket_name} 已创建，并设置访问策略")
-    else:
-        # 桶已存在，仅打印日志，不重复操作
-        logger.info(f"MinIO桶 {bucket_name} 已存在，无需重复创建")
+        logger.info(f"MinIO桶 {bucket_name} 已创建")
+    # 无论新建还是已存在，都确保公开读策略生效（图片需匿名访问，否则前端加载图片会 403）
+    client.set_bucket_policy(bucket_name, _set_bucket_policy(bucket_name))
+    logger.info(f"MinIO桶 {bucket_name} 公开读策略已设置")
 
 
 def get_minio_client() -> Minio:

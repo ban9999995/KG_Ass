@@ -74,6 +74,8 @@ def get_llm_client(model: str | None = None, json_mode: bool = False) -> ChatOpe
             temperature=lm_config.llm_temperature or _DEFAULT_TEMPERATURE,  # 低温度保证输出确定性（0~1）
             api_key=lm_config.api_key,  # API密钥
             base_url=lm_config.base_url,  # API基础地址（适配国产模型代理地址）
+            timeout=60,  # 请求超时时间(秒)：避免接口/网络无响应时无限阻塞
+            max_retries=2,  # 超时/失败后的重试次数
             extra_body=extra_body,  # 非openai标准的key ChatOpenAI没有地址! -> 模型官方的参数介绍
             model_kwargs=model_kwargs, # openapi标准的key
         )
