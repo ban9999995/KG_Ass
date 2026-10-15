@@ -45,7 +45,7 @@ def call_model_extract_item_names_and_rewritten_query(original_query:str,valid_h
     # 3.1 准备大语言模型客户端 infra.llm_model(模型的名字,json_mode=True)
     llm_model_json = model_provider.llm_model(json_mode=True)
     # 3.2 加载和封装提示词信息
-    history_text:str = ""
+    history_text:str|None= None
     if valid_history_messages:
         # role = user  text = 原始问题  rewritten_query = 重写的问题  item_names = [1,2,3] image_urls = []
         # 本次为提问,原始问题为:xx,上一次问题重写后:xxx,问题管理的item_name:x,x,x

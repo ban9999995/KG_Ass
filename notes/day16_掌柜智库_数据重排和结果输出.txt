@@ -115,63 +115,7 @@
 
 3. 数据库检索结果融入: node_output_answer
    节点作用:
-           |--------------------------没有识别item_name-------------------------|
-           |      问题检索                                                      |
-       意图识别 -> 假设检索  -> rrf数据库融合 -> rerank精排 -> reranked_docs -> 结果输出节点 ->  sse -> 前端
-                  联网检索
-
-       结果输出节点   1. delta的数据推送  2. final提供数据  answer | image_urls -> state   -> 前端  (流式)
-       结果输出节点   answer | image_urls -> state -> 前端  (非流式)
    节点参数:
-       使用:  is_stream  reranked_docs session_id  item_names  rewritten_query
-       生成:  answer  image_urls
    节点步骤:
-       1. 判断有没有answer
-          has_answer_in_state(state) ->bool:
-       2. 没有
-          2.1 获取参数和校验
-              get_data_and_validate(state) -> tuple:
-          2.2 拼接模型反馈的提示词字符串
-              create_model_prompt(reranked_docs,session_id,item_names,rewritten_query) -> str:
-          2.3 调用模型获取回答的answer
-              call_model_create_answer(prompt:str,is_stream)->answer
-              流式   -> stream [123456789]-> 12 345 6 78 9 delta -> +answer
-              非流式  -> invoke -> 123456789 -> answer
-          2.4 提供物料reranked_docs获取图片链接 -> image_urls
-              extract_image_urls_in_docs(reranked_docs) -> list[str]
-          2.5 更新state <- answer | image_urls
-       3. 有
-       4. 更新聊天记录[assistant]
-       return state
 
 4. 项目节点总结
-   项目流程 + 技术点 + 扩展项目评估思路
-
-   导入  node_entry                  node_md_img   node_document_split  node_item_name_recognition   node_bge_embedding  node_import_milvus
-
-                    node_pdf_to_md
-
-   查询
-                                node_embedding_search
-
-      node_item_name_confirm    node_hyde_embedding_search      node_rrf  node_rerank[这是统计准确路]   node_output_answer
-
-                                node_web_search
-
-   技术点:
-     node_entry -> Path .stem  file_title
-     node_pdf_to_md -> minerU / requests / shutil / Path
-     node_md_img    -> minio / re  / base64 / 视觉模型数据格式 /  mimetype
-     node_document_split ->  原则1:语义优先 原则2: 大小合适 调试/嵌入式模型/重排序模型  原则3:边界清晰 原则4: 可追溯
-     node_item_name_recognition | node_import_milvus -> 大语言模型 / 嵌入式模型 /  milvus [创建集合/存储数据/删除数据]
-     node_bge_embedding -> chunks -> 嵌入式模型 -> 批量
-
-     node_item_name_confirm -> milvus的混合检索 / 大语言模型 / JsonOutputParser [1.提示词 2.示例 3.模型参数 4.结果解析]
-     node_embedding_search / node_hyde_embedding_search -> milvus混合检索 / 假设性存在的意义: 丰富问题的语义,提高命中
-     node_web_search -> openai mcp使用 / asyncio.run / create_task
-     node_rrf  -> rrf融合算法  1/k+rank * weight
-     node_rerank -> reranker模型的使用 / 打分 / token / 动态topk  指针指向第一个明确要的前置位置 依次向后循环 判断前后的断崖! 是 跳出 index+1
-                    问题1: 没有断崖  问题2: max小于len   问题3: max小于min  问题4: 连续'断崖'
-     node_output_answer -> 正则 / 模型流式调用 / mongo数据存储
-
-     web模块 -> fastapi / sse / mongodb / fastapi异步模型 [宏观/微观]

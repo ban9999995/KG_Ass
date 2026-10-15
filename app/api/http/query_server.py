@@ -100,13 +100,9 @@ def query_question(task:BackgroundTasks,param:QueryRequestSchema):
         # 创建一个队列
         clear_task(session_id)
         create_sse_queue(session_id)
-        """
-            progress  -> 进行节点 / 完成节点 / 任务状态 -> task_utils(,,is_stream=True)    [每个节点]
-            delta     -> 打字机模型 文本的增量返回 [] [] [] [] []  push_to_session("session_id","delta",{delta:增量字符串})  [invoke/stream]   [最后一个节点]
-            final     -> 不报错最终返回,覆盖打字机模型,才能显示图片   push_to_session("session_id","final",{answer:增量字符串,image_urls:[]})  [接口执行完毕,流式 正常]
-            error     -> 执行图 / except / 错误信息  push_to_session(session_id,error,{error:异常信息})   [接口执行完毕,流式 不正常]
-        """
         task.add_task(invoke_query_graph,is_stream=is_stream,original_query=query,session_id=session_id)
+
+
         # 3.流式的异步执行
         return AsyncQueryResponseSchema(
             message=f"{query}问题正在查询和处理中...",
