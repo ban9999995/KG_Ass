@@ -28,6 +28,12 @@ class ImportGraphState(TypedDict):
 
     embeddings_content:list[dict] # 切块的内容(有向量)
 
+    knowledge_unit_id:str         # 知识单元稳定业务主键
+    knowledge_version:int         # 当前导入版本
+    knowledge_status:str          # DRAFT/PROCESSING/ACTIVE...
+    document_format:str           # pdf/md/docx/txt
+    is_document_parse_enabled:bool
+
 # 默认对象 模板
 graph_default_state: ImportGraphState = {
     "task_id": "",
@@ -42,6 +48,11 @@ graph_default_state: ImportGraphState = {
     "chunks": [],
     "item_name": "",
     "embeddings_content": [],
+    "knowledge_unit_id": "",
+    "knowledge_version": 1,
+    "knowledge_status": "DRAFT",
+    "document_format": "",
+    "is_document_parse_enabled": False,
 }
 
 

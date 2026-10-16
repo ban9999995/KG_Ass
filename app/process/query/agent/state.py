@@ -30,6 +30,7 @@ class QueryGraphState(TypedDict):
     history: list  # 历史对话记录
     is_stream: bool  # 是否流式输出标记
     image_urls: List[str]  # 答案中引用的图片链接
+    user_context: dict  # 当前用户身份、部门与角色，用于动态权限过滤
 
 
 # ========================
@@ -49,7 +50,8 @@ query_graph_default_state: QueryGraphState = {
     "rewritten_query": "",
     "history": [],
     "is_stream": False,
-    "image_urls": []
+    "image_urls": [],
+    "user_context": {},
 }
 
 

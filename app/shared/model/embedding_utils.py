@@ -2,6 +2,7 @@
 工具模块，负责提供 embedding 相关的辅助能力。
 """
 from pymilvus.model.hybrid import BGEM3EmbeddingFunction
+from threading import Lock
 
 from app.shared.config.embedding_config import embedding_config
 from app.shared.runtime.logger import logger
@@ -9,6 +10,7 @@ from app.shared.runtime.logger import logger
 _DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 _DEFAULT_EMBEDDING_DEVICE = "cpu"
 _bge_m3_ef: BGEM3EmbeddingFunction | None = None
+_bge_m3_lock = Lock()
 
 
 def get_bge_m3_ef() -> BGEM3EmbeddingFunction:
@@ -17,41 +19,43 @@ def get_bge_m3_ef() -> BGEM3EmbeddingFunction:
     :return: 初始化完成的BGEM3EmbeddingFunction实例
     """
     global _bge_m3_ef
-    # 单例模式：已初始化则直接返回，避免重复加载模型
-    if _bge_m3_ef is not None:
-        logger.debug("BGE-M3模型单例已存在，直接返回实例")
-        return _bge_m3_ef
+    # 初始化模型时加锁，避免多个上传任务同时创建多份大模型。
+    with _bge_m3_lock:
+        # 单例模式：已初始化则直接返回，避免重复加载模型
+        if _bge_m3_ef is not None:
+            logger.debug("BGE-M3模型单例已存在，直接返回实例")
+            return _bge_m3_ef
 
-    # 从环境变量加载配置，无配置则使用默认值
-    # 本地有可以使用本地地址！ 没有使用 "BAAI/bge-m3" 会自动下载！ 如果云端部署也可以使用url地址！
-    model_name = embedding_config.bge_m3_path or embedding_config.bge_m3 or _DEFAULT_EMBEDDING_MODEL
-    device = embedding_config.bge_device or _DEFAULT_EMBEDDING_DEVICE
-    use_fp16 = embedding_config.bge_fp16
+        # 从环境变量加载配置，无配置则使用默认值
+        # 本地有可以使用本地地址！ 没有使用 "BAAI/bge-m3" 会自动下载！ 如果云端部署也可以使用url地址！
+        model_name = embedding_config.bge_m3_path or embedding_config.bge_m3 or _DEFAULT_EMBEDDING_MODEL
+        device = embedding_config.bge_device or _DEFAULT_EMBEDDING_DEVICE
+        use_fp16 = embedding_config.bge_fp16
 
-    # 打印模型初始化配置，便于问题排查
-    logger.info(
-        "开始初始化BGE-M3模型",
-        extra={
-            "model_name": model_name,
-            "device": device,
-            "use_fp16": use_fp16,
-            "normalize_embeddings": True
-        }
-    )
-
-    try:
-        # 初始化 BGE-M3 模型，开启原生 L2 归一化（适配 Milvus IP 内积检索）
-        _bge_m3_ef = BGEM3EmbeddingFunction(
-            model_name=model_name,
-            device=device,
-            use_fp16=use_fp16,
-            normalize_embeddings=True  # 模型原生对稠密+稀疏向量做L2归一化
+        # 打印模型初始化配置，便于问题排查
+        logger.info(
+            "开始初始化BGE-M3模型",
+            extra={
+                "model_name": model_name,
+                "device": device,
+                "use_fp16": use_fp16,
+                "normalize_embeddings": True
+            }
         )
-        logger.success("BGE-M3模型初始化成功，已开启原生L2归一化")
-        return _bge_m3_ef
-    except Exception as e:
-        logger.error(f"BGE-M3模型初始化失败：{str(e)}", exc_info=True)
-        raise  # 向上抛出异常，由调用方处理
+
+        try:
+            # 初始化 BGE-M3 模型，开启原生 L2 归一化（适配 Milvus IP 内积检索）
+            _bge_m3_ef = BGEM3EmbeddingFunction(
+                model_name=model_name,
+                device=device,
+                use_fp16=use_fp16,
+                normalize_embeddings=True  # 模型原生对稠密+稀疏向量做L2归一化
+            )
+            logger.success("BGE-M3模型初始化成功，已开启原生L2归一化")
+            return _bge_m3_ef
+        except Exception as e:
+            logger.error(f"BGE-M3模型初始化失败：{str(e)}", exc_info=True)
+            raise  # 向上抛出异常，由调用方处理
 
 
 def generate_embeddings(texts: list[str]) -> dict[str, list]:
@@ -77,7 +81,9 @@ def generate_embeddings(texts: list[str]) -> dict[str, list]:
         # embeddings = 稠密 -> [[1024],[1024],[1024]]
         #              稀疏 250009 大部分都是0  [[25万],[25万],[25万]] -> BGEM3FlagModel -> [{index:x,index:x} -> 一个,{},{}]
         #              milvus -> 250009 -> c [compress]s [sparse]r [row] 压缩稀疏矩阵 -> 本次解析的所有的稀疏量  更高效的存储多组稀疏数据
-        embeddings = model.encode_documents(texts)
+        # 编码也串行化，避免底层模型在并发请求中重复执行 .to(device)。
+        with _bge_m3_lock:
+            embeddings = model.encode_documents(texts)
         logger.debug(f"模型编码完成，开始解析稀疏向量格式，共{len(texts)}条")
 
         # 初始化稀疏向量处理结果，解析为字典格式（适配序列化/存储）

@@ -14,24 +14,36 @@ def resolve_input_file(state: ImportGraphState) -> ImportGraphState:
         # BaseException -> Exception -> Error
         logger.error(f"local_file_path没有赋值,没有文件可以解析,业务无法继续进行,提前终止!")
         raise ValueError(f"local_file_path没有赋值,没有文件可以解析,业务无法继续进行,提前终止!")
-    # 3. 判断文件类型,后缀名(.md / .pdf)  xx.md  xx.MD
-    if local_file_path.lower().endswith(".md"):
+    # 3. 判断文件类型,后缀名(.md / .pdf / .docx / .txt)
+    suffix = Path(local_file_path).suffix.lower()
+    state["document_format"] = suffix.lstrip(".")
+    if suffix == ".md":
         # md
         state['md_path'] = local_file_path
         state['is_md_read_enabled'] = True
         state['pdf_path'] = None
         state['is_pdf_read_enabled'] = False
-    elif local_file_path.lower().endswith(".pdf"):
+        state['is_document_parse_enabled'] = False
+    elif suffix == ".pdf":
         # pdf
         state['md_path'] = None
         state['is_md_read_enabled'] = False
         state['pdf_path'] = local_file_path
         state['is_pdf_read_enabled'] = True
+        state['is_document_parse_enabled'] = False
+    elif suffix in {".docx", ".txt"}:
+        state['md_path'] = None
+        state['is_md_read_enabled'] = False
+        state['pdf_path'] = None
+        state['is_pdf_read_enabled'] = False
+        state['document_format'] = suffix.lstrip(".")
+        state['is_document_parse_enabled'] = True
     else:
         state['md_path'] = None
         state['is_md_read_enabled'] = False
         state['pdf_path'] = None
         state['is_pdf_read_enabled'] = False
+        state['is_document_parse_enabled'] = False
     # 扩展文件类型 elif...
     # 4. 是md -> 修改 md_path is_md_read_enabled -> 正值  pdf_path is_pdf_enabled -> 反值
     # 5. 是pdf -> 修改 md_path is_md_read_enabled -> 反值  pdf_path is_pdf_enabled -> 正值

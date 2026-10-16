@@ -7,6 +7,7 @@ from app.rag.query.config import HYBRID_SEARCH_LIMIT_NUMBER, HYBRID_SEARCH_RANKE
 from app.shared.runtime.logger import logger, step_log
 from app.infra.model.model_providers import model_provider
 from app.infra.milvus.VectorStore import milvus_gateway
+from app.rag.knowledge.knowledge_unit_service import filter_active_chunks
 from app.shared.runtime.load_prompt import load_prompt
 
 #1. 获取并校验参数  rewritten_query   item_names
@@ -45,7 +46,7 @@ def search_chunks_by_rewritten(rewritten_query,item_names,model_answer) -> list[
         norm_score=True,
         limit=HYBRID_SEARCH_LIMIT_NUMBER,
         output_fields=[
-            "chunk_id" , "file_title" ,"parent_title","title","part","item_name","content"
+            "chunk_id" , "file_title" ,"parent_title","title","part","item_name","content","knowledge_unit_id","knowledge_status"
         ]
     )
     # [  [ { id/chunk_id:x,distance:分,entity:{chunk_id" , "file_title" ,"parent_title","title","part","item_name","content"}  } ] ]
@@ -66,6 +67,8 @@ def normalize_retrieved_chunk(milvus_response:list[dict])->list[dict]:
             "title": item.get("entity",{}).get("title"),
             "part": item.get("entity",{}).get("part"),
             "item_name": item.get("entity",{}).get("item_name"),
+            "knowledge_unit_id": item.get("entity",{}).get("knowledge_unit_id"),
+            "knowledge_status": item.get("entity",{}).get("knowledge_status"),
             "content": item.get("entity",{}).get("content"),
             "score":item.get("distance",0.0),
             "type":"milvus" # 拼接提示词的时候告诉模型,我们数据来自于哪
@@ -100,7 +103,7 @@ def search_by_hyde(state: QueryGraphState) -> QueryGraphState:
     # 2. 向量数据库检索chunk
     milvus_response = search_chunks_by_rewritten(rewritten_query,item_names,model_answer)
     # 3. 格式化处理
-    normalize_chunks = normalize_retrieved_chunk(milvus_response)
+    normalize_chunks = filter_active_chunks(normalize_retrieved_chunk(milvus_response), state.get("user_context"))
     # 4. 更新state
     state['hyde_embedding_chunks'] = normalize_chunks
     return state

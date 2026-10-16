@@ -56,6 +56,12 @@ def generate_chunk_embeddings(state: ImportGraphState) -> ImportGraphState:
     chunks = get_data_and_validate(state)
     # 2.批量生成向量
     batch_create_chunks_vector(chunks)
-    # 3. 更新state并返回
+    # 3. 回写知识单元元数据，供生命周期过滤和引用溯源使用。
+    knowledge_unit_id = state.get("knowledge_unit_id")
+    for chunk in chunks:
+        if knowledge_unit_id:
+            chunk["knowledge_unit_id"] = knowledge_unit_id
+            chunk["knowledge_version"] = state.get("knowledge_version", 1)
+            chunk["knowledge_status"] = "DRAFT"
     state['embeddings_content'] = chunks
     return state

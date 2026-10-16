@@ -1,6 +1,6 @@
 
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # 接口Status 响应 Response 还是请求 Request  Schema
 class StatusResponseSchema(BaseModel):
@@ -15,3 +15,8 @@ class UploadResponseSchema(BaseModel):
     code:int = 200
     message:str
     task_ids:list[str]
+    knowledge_unit_ids:list[str] = Field(default_factory=list)
+
+
+class KnowledgePermissionRequest(BaseModel):
+    permissions:list[dict[str, str]] = Field(default_factory=list)

@@ -112,11 +112,12 @@ def prepare_chunks_milvus_collection():
 @step_log("insert_chunks_to_milvus")
 def insert_chunks_to_milvus(chunks:list[dict[str,Any]]) -> list:
     milvus_client:MilvusClient = milvus_gateway.milvus_client
-    # 1. 先根据file_title删除数据
+    # 1. 优先按稳定知识单元 ID 替换；兼容不带 ID 的历史调用。
     file_title = chunks[0].get("file_title")
+    knowledge_unit_id = chunks[0].get("knowledge_unit_id")
     milvus_client.delete(
         collection_name=milvus_gateway.chunk_collection_name,
-        filter=f"file_title == '{file_title}'"
+        filter=(f"knowledge_unit_id == '{knowledge_unit_id}'" if knowledge_unit_id else f"file_title == '{file_title}'")
     )
     # 2. 插入新的数据
     result = milvus_client.insert(
